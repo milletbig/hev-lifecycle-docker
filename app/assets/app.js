@@ -242,9 +242,53 @@
 
                 const currentCategory = computed(() => categories.value.find(c => c.id === form.categoryId));
 
+                // 是否包含有效里程：总里程优先，缺失时回退 HEV + EV
+                const hasMileageInfo = (r) => {
+                    if (!r) return false;
+                    if ((Number(r.totalMileage) || 0) > 0) return true;
+                    return ((Number(r.hev) || 0) + (Number(r.ev) || 0)) > 0;
+                };
+
+                // 表格排序：日期倒序分组；组内含里程记录按里程倒序，其余保持手动顺序
+                const sortedTableRecords = computed(() => {
+                    const buckets = new Map();
+                    filteredTableRecords.value.forEach(r => {
+                        const key = r.date || '';
+                        if (!buckets.has(key)) buckets.set(key, []);
+                        buckets.get(key).push(r);
+                    });
+                    const dates = Array.from(buckets.keys()).sort((a, b) => (a === b ? 0 : (a < b ? 1 : -1)));
+                    const result = [];
+                    dates.forEach(date => {
+                        const list = buckets.get(date);
+                        const mileageList = list.filter(hasMileageInfo).sort((a, b) => getMileage(b) - getMileage(a));
+                        const manualList = list.filter(r => !hasMileageInfo(r));
+                        result.push(...mileageList, ...manualList);
+                    });
+                    return result;
+                });
+
                 const paginatedRecords = computed(() => {
                     const start = (currentPage.value - 1) * pageSize.value;
-                    return filteredTableRecords.value.slice(start, start + pageSize.value);
+                    return sortedTableRecords.value.slice(start, start + pageSize.value);
+                });
+
+                // 当前页按日期聚合，供表格分组表头展示
+                const groupedRecords = computed(() => {
+                    const groups = [];
+                    let current = null;
+                    paginatedRecords.value.forEach(r => {
+                        const date = r.date || '未填写日期';
+                        if (!current || current.date !== date) {
+                            current = { date, records: [], expense: 0, income: 0 };
+                            groups.push(current);
+                        }
+                        current.records.push(r);
+                        const amount = Number(r.amount) || 0;
+                        if (r.recordType === 'income') current.income += amount;
+                        else current.expense += amount;
+                    });
+                    return groups;
                 });
 
                 // =============== 初始化与持久化 ===============
@@ -650,6 +694,7 @@
                 // ==================== 记录拖拽排序 ====================
                 const recordsTableWrap = ref(null);
                 const draggingId = ref('');
+                const draggingDate = ref('');
                 const dragOverId = ref('');
 
                 const recordRowClassName = ({ row }) => {
@@ -664,7 +709,13 @@
                         ElementPlus.ElMessage.warning('当前为只读角色，无法调整顺序');
                         return;
                     }
+                    if (hasMileageInfo(row)) {
+                        event.preventDefault();
+                        ElementPlus.ElMessage.warning('含里程的记录按里程倒序展示，无需手动排序');
+                        return;
+                    }
                     draggingId.value = row.id;
+                    draggingDate.value = row.date || '';
                     dragOverId.value = '';
                     if (event.dataTransfer) {
                         event.dataTransfer.effectAllowed = 'move';
@@ -674,21 +725,40 @@
 
                 const onDragEnd = () => {
                     draggingId.value = '';
+                    draggingDate.value = '';
                     dragOverId.value = '';
                 };
 
-                const getRowRecordFromEvent = (target) => {
+                // 表格已按日期分组渲染，需要先定位事件所属分组，再按行号映射到对应记录
+                const getGroupRecordsFromEvent = (target) => {
                     if (!(target instanceof Element)) return null;
+                    const groupEl = target.closest('[data-records-group]');
+                    if (!groupEl) return null;
+                    const idx = Number(groupEl.getAttribute('data-records-group'));
+                    const group = groupedRecords.value[idx];
+                    return group ? group.records : null;
+                };
+
+                const getRowRecordFromEvent = (target, list) => {
+                    if (!(target instanceof Element) || !Array.isArray(list)) return null;
                     const tr = target.closest('tr.el-table__row');
                     if (!tr || !tr.parentElement) return null;
                     const idx = Array.prototype.indexOf.call(tr.parentElement.children, tr);
-                    return paginatedRecords.value[idx] || null;
+                    return list[idx] || null;
+                };
+
+                // 仅允许在同一日期分组内、对无里程记录拖拽排序
+                const canDropOnRow = (row) => {
+                    if (!row || row.id === draggingId.value) return false;
+                    if (hasMileageInfo(row)) return false;
+                    return (row.date || '') === draggingDate.value;
                 };
 
                 const handleTableDragOver = (event) => {
                     if (!draggingId.value) return;
-                    const row = getRowRecordFromEvent(event.target);
-                    if (!row) return;
+                    const list = getGroupRecordsFromEvent(event.target);
+                    const row = getRowRecordFromEvent(event.target, list);
+                    if (!canDropOnRow(row)) return;
                     event.preventDefault();
                     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
                     if (dragOverId.value !== row.id) dragOverId.value = row.id;
@@ -702,11 +772,13 @@
 
                 const handleTableDrop = (event) => {
                     if (!draggingId.value) return;
-                    const row = getRowRecordFromEvent(event.target);
-                    if (!row) return;
+                    const list = getGroupRecordsFromEvent(event.target);
+                    const row = getRowRecordFromEvent(event.target, list);
+                    if (!canDropOnRow(row)) return;
                     event.preventDefault();
                     moveRecord(draggingId.value, row.id);
                     draggingId.value = '';
+                    draggingDate.value = '';
                     dragOverId.value = '';
                 };
 
@@ -1739,7 +1811,7 @@
                 return {
                     activeTab, chartPeriod, selectedChartCategory, appSettings, isCompact, 
                     vehicles, currentVehicleId, currentVehicleName, handleVehicleChange, addVehicle, editVehicle, deleteVehicle,
-                    categories, records, activeRecords, form, currentCategory, paginatedRecords,
+                    categories, records, activeRecords, form, currentCategory, groupedRecords, hasMileageInfo,
                     filteredCategories, currentPage, pageSize, requiresMileage, showSubCatPie, formatSoc,
                     tableFilter, filteredTableRecords, tableStats, maintenanceInfo, insuranceInfo, inspectionInfo,
                     handleRecordTypeChange, handleCategoryChange, saveRecord, deleteRecord,

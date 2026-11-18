@@ -38,8 +38,16 @@
         .drag-handle { cursor: grab; user-select: none; color: #909399; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 3px; }
         .drag-handle:hover { color: #409EFF; background: #ecf5ff; }
         .drag-handle:active { cursor: grabbing; }
+        .drag-handle.drag-handle-disabled { cursor: default; color: #c0c4cc; background: transparent; }
         .el-table__row.drag-row-dragging td { opacity: .45; }
         .el-table__row.drag-row-over td { background: #ecf5ff !important; }
+        /* 事件记录按日期分组 */
+        .record-date-group { margin-bottom: 18px; }
+        .record-date-group:last-child { margin-bottom: 0; }
+        .record-date-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: #f5f7fa; border: 1px solid #ebeef5; border-bottom: none; border-radius: 4px 4px 0 0; }
+        .record-date-title { font-size: 14px; font-weight: bold; color: #303133; }
+        .record-date-meta { font-size: 12px; color: #909399; }
+        .records-empty { padding: 36px 0; text-align: center; color: #909399; font-size: 13px; border: 1px solid #ebeef5; border-radius: 4px; }
         .category-sort-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #ebeef5; font-size: 13px; }
         .category-sort-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .category-sort-row:last-child { border-bottom: none; }
@@ -368,69 +376,78 @@
                 </el-form>
 
                 <div ref="recordsTableWrap">
-                <el-table :data="paginatedRecords" style="width: 100%" border stripe :row-class-name="recordRowClassName">
-                    <el-table-column label="排序" width="56" align="center">
-                        <template #default="scope">
-                            <span class="drag-handle" title="拖拽调整顺序" :draggable="canEdit"
-                                @dragstart="onDragStart($event, scope.row)"
-                                @dragend="onDragEnd">≡</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="date" label="日期" width="110"></el-table-column>
-                    <el-table-column label="收/支" width="70">
-                        <template #default="scope">
-                            <el-tag :type="scope.row.recordType === 'income' ? 'success' : 'danger'" size="small">
-                                {{ scope.row.recordType === 'income' ? '收入' : '支出' }}
-                            </el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="categoryName" label="类别" width="90"></el-table-column>
-                    <el-table-column prop="subCategory" label="具体项目" width="120"></el-table-column>
-                    <el-table-column label="金额(元)" width="100">
-                        <template #default="scope">
-                            <span :style="{ color: scope.row.recordType === 'income' ? '#67C23A' : '#F56C6C', fontWeight: 'bold' }">
-                                {{ scope.row.recordType === 'income' ? '+' : '-' }}{{ scope.row.amount }}
-                            </span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="总里程" width="90">
-                        <template #default="scope">
-                            <span v-if="!requiresMileage(scope.row.categoryName)">-</span>
-                            <span v-else>{{ scope.row.totalMileage || (scope.row.hev + scope.row.ev) || 0 }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="HEV" width="80">
-                        <template #default="scope">
-                            {{ !requiresMileage(scope.row.categoryName) ? '-' : scope.row.hev }}
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="EV" width="80">
-                        <template #default="scope">
-                            {{ !requiresMileage(scope.row.categoryName) ? '-' : scope.row.ev }}
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="liters" label="加油（L）" width="96" label-class-name="col-nowrap-header">
-                        <template #default="scope">{{ scope.row.liters ? scope.row.liters : '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="充电(kWh)" width="104" label-class-name="col-nowrap-header">
-                        <template #default="scope">{{ scope.row.kwh ? scope.row.kwh : '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="起始SOC(%)" min-width="104" label-class-name="col-nowrap-header">
-                        <template #default="scope">{{ formatSoc(scope.row.startSoc) }}</template>
-                    </el-table-column>
-                    <el-table-column label="终止SOC(%)" min-width="104" label-class-name="col-nowrap-header">
-                        <template #default="scope">{{ formatSoc(scope.row.endSoc) }}</template>
-                    </el-table-column>
-                    <el-table-column label="备注" min-width="120">
-                        <template #default="scope">{{ scope.row.remark || '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="操作" width="146">
-                        <template #default="scope">
-                            <el-button size="small" type="primary" @click="openEditRecord(scope.row)">编辑</el-button>
-                            <el-button size="small" type="danger" @click="deleteRecord(scope.row.id)">删除</el-button>
-                        </template>
-                    </el-table-column>
-                </el-table>
+                <div v-if="!groupedRecords.length" class="records-empty">暂无记录</div>
+                <div v-for="(group, gi) in groupedRecords" :key="group.date" class="record-date-group" :data-records-group="gi">
+                    <div class="record-date-header">
+                        <span class="record-date-title">{{ group.date }}</span>
+                        <span class="record-date-meta">{{ group.records.length }} 条 · 支出 {{ group.expense.toFixed(2) }} 元 · 收入 {{ group.income.toFixed(2) }} 元</span>
+                    </div>
+                    <el-table :data="group.records" style="width: 100%" border stripe :row-class-name="recordRowClassName">
+                        <el-table-column label="排序" width="56" align="center">
+                            <template #default="scope">
+                                <span class="drag-handle"
+                                    :class="{ 'drag-handle-disabled': hasMileageInfo(scope.row) }"
+                                    :title="hasMileageInfo(scope.row) ? '含里程记录按里程倒序展示' : '拖拽调整顺序'"
+                                    :draggable="canEdit && !hasMileageInfo(scope.row)"
+                                    @dragstart="onDragStart($event, scope.row)"
+                                    @dragend="onDragEnd">≡</span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="收/支" width="70">
+                            <template #default="scope">
+                                <el-tag :type="scope.row.recordType === 'income' ? 'success' : 'danger'" size="small">
+                                    {{ scope.row.recordType === 'income' ? '收入' : '支出' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="categoryName" label="类别" width="90"></el-table-column>
+                        <el-table-column prop="subCategory" label="具体项目" width="120"></el-table-column>
+                        <el-table-column label="金额(元)" width="100">
+                            <template #default="scope">
+                                <span :style="{ color: scope.row.recordType === 'income' ? '#67C23A' : '#F56C6C', fontWeight: 'bold' }">
+                                    {{ scope.row.recordType === 'income' ? '+' : '-' }}{{ scope.row.amount }}
+                                </span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="总里程" width="90">
+                            <template #default="scope">
+                                <span v-if="!requiresMileage(scope.row.categoryName)">-</span>
+                                <span v-else>{{ scope.row.totalMileage || (scope.row.hev + scope.row.ev) || 0 }}</span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="HEV" width="80">
+                            <template #default="scope">
+                                {{ !requiresMileage(scope.row.categoryName) ? '-' : scope.row.hev }}
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="EV" width="80">
+                            <template #default="scope">
+                                {{ !requiresMileage(scope.row.categoryName) ? '-' : scope.row.ev }}
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="liters" label="加油（L）" width="96" label-class-name="col-nowrap-header">
+                            <template #default="scope">{{ scope.row.liters ? scope.row.liters : '-' }}</template>
+                        </el-table-column>
+                        <el-table-column label="充电(kWh)" width="104" label-class-name="col-nowrap-header">
+                            <template #default="scope">{{ scope.row.kwh ? scope.row.kwh : '-' }}</template>
+                        </el-table-column>
+                        <el-table-column label="起始SOC(%)" min-width="104" label-class-name="col-nowrap-header">
+                            <template #default="scope">{{ formatSoc(scope.row.startSoc) }}</template>
+                        </el-table-column>
+                        <el-table-column label="终止SOC(%)" min-width="104" label-class-name="col-nowrap-header">
+                            <template #default="scope">{{ formatSoc(scope.row.endSoc) }}</template>
+                        </el-table-column>
+                        <el-table-column label="备注" min-width="120">
+                            <template #default="scope">{{ scope.row.remark || '-' }}</template>
+                        </el-table-column>
+                        <el-table-column label="操作" width="146">
+                            <template #default="scope">
+                                <el-button size="small" type="primary" @click="openEditRecord(scope.row)">编辑</el-button>
+                                <el-button size="small" type="danger" @click="deleteRecord(scope.row.id)">删除</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </div>
                 </div>
                 <el-pagination 
                     style="margin-top: 15px;" 
