@@ -5,14 +5,15 @@
 ## 快速开始
 
 ```bash
-cd /home/shawn/hev-lifecycle
-bash scripts/deploy.sh          # 首次会提示设置管理员密码（仅保存 scrypt 散列）
+git clone git@github.com:milletbig/hev-lifecycle-docker.git
+cd hev-lifecycle-docker
+bash scripts/deploy.sh          # 拉取已构建镜像；首次会提示设置管理员密码（仅保存 scrypt 散列）
 ```
 
 部署完成后访问：`http://<服务器IP>:18480`
 
 - 未登录访问任何页面、脚本或数据接口都会被拦截（302 跳转登录页 / 401）。
-- 登录后的数据自动同步到 `/home/shawn/hev-lifecycle/data/state.json`，每次记录变更立即备份，并按设置页配置的周期自动备份。
+- 登录后的数据自动同步到项目目录下的 `data/state.json`，每次记录变更立即备份，并按设置页配置的周期自动备份。
 - 原有页面业务脚本 `app/assets/app.js` 与原 HTML 内联脚本 **SHA-256 完全一致**，模板结构逐字保留，仅将 CDN 依赖改为本地文件。
 
 ## 自动重启策略
@@ -30,7 +31,7 @@ bash scripts/deploy.sh          # 首次会提示设置管理员密码（仅保�
 
 ```bash
 docker inspect -f '{{.HostConfig.RestartPolicy.Name}} {{.RestartCount}} {{.State.Health.Status}}' hev-lifecycle
-docker compose -f /home/shawn/hev-lifecycle/docker-compose.yml ps
+docker compose ps          # 在项目目录执行
 systemctl is-enabled docker
 ```
 
@@ -43,10 +44,10 @@ systemctl is-enabled docker
 
 ### 备份文件与保留规则
 
-- 目录：`/home/shawn/hev-lifecycle/data/backups/`
+- 目录：`data/backups/`
 - 命名：`state-<UTC时间>-rev<版本号>-change.json`（变更备份）、`state-<UTC时间>-rev<版本号>-scheduled.json`（周期备份）
 - 保留策略：仅保留最新 **30** 份，超出后自动删除最旧的备份（可由 `.env` 的 `BACKUP_KEEP` 调整，默认 30）
-- 周期状态：`/home/shawn/hev-lifecycle/data/backup-schedule.json` 记录上次周期备份时间，服务启动时自动校验是否到期
+- 周期状态：`data/backup-schedule.json` 记录上次周期备份时间，服务启动时自动校验是否到期
 - 完整性：备份与主数据均采用“临时文件 + `fsync` + 原子重命名”写入，避免半写文件；单份备份为完整 `state.json` 快照
 
 ### 配置与恢复
@@ -58,54 +59,28 @@ systemctl is-enabled docker
 | 备份目录 | `data/backups` | 自动创建 | 随数据目录挂载持久化 |
 
 ```bash
-ls -lt /home/shawn/hev-lifecycle/data/backups | head
-bash /home/shawn/hev-lifecycle/scripts/restore.sh <备份文件路径>   # 恢复指定备份
+ls -lt data/backups | head
+bash scripts/restore.sh <备份文件路径>   # 恢复指定备份
 ```
 
-## 目录迁移说明（/usr/shawn → /home/shawn）
+## 镜像发布
 
-项目已于 2026-11-18 整体迁移至 `/home/shawn/hev-lifecycle`，旧目录 `/usr/shawn/hev-lifecycle` 已清理。当前唯一有效部署路径为 `/home/shawn/hev-lifecycle`，请勿再从旧路径执行 `docker compose`。
+镜像由 GitHub Actions 在推送 `v*.*.*` 标签时自动构建，并发布到 GitHub Container Registry：
 
-### 迁移范围
+| 项目 | 值 |
+| --- | --- |
+| 镜像地址 | `ghcr.io/milletbig/hev-lifecycle-docker` |
+| 标签 | `1.0.1`、`1.0`、`latest`、`sha-<commit>` |
+| 架构 | `linux/amd64`、`linux/arm64` |
 
-- 全部文件、子目录、隐藏配置（`.env`、`.env.example`、`.dockerignore`、`.gitignore`）、`app/vendor/` 依赖、`config-backup/` 归档均已完整复制。
-- `data/` 目录随项目迁移，包含 `state.json`、`backups/`、`session.secret`、`backup-schedule.json`；权限与属主保留（目录 0700，数据/密钥 0600，uid 10001）。
-- `.env` 的 `HEV_DATA_DIR`、`docker-compose.yml` 的数据卷默认值、README 与全部文档中的路径引用均已改为新路径。
-- 部署、备份、恢复、初始化脚本均通过 `BASE_DIR` 动态定位项目根目录，无需修改。
-
-### 再次迁移的可复用步骤
+升级到新版本时，修改 `docker-compose.yml` 中的镜像标签后执行：
 
 ```bash
-# 1. 停止容器，避免复制过程中数据写入
-docker compose -f /home/shawn/hev-lifecycle/docker-compose.yml stop
-
-# 2. 完整复制（保留权限、属主、软链接）
-cp -a /home/shawn/hev-lifecycle /新路径/hev-lifecycle
-
-# 3. 更新新目录 .env 中的 HEV_DATA_DIR，并确认无旧路径残留
-grep -rn "/home/shawn/hev-lifecycle" /新路径/hev-lifecycle
-
-# 4. 从新目录重建容器（挂载配置变更必须重建）
-cd /新路径/hev-lifecycle
-docker compose up -d --build --force-recreate
+docker compose pull
+docker compose up -d
 ```
 
-### 迁移后验证要点
-
-- `docker inspect hev-lifecycle`：健康状态 `healthy`，挂载源指向新路径；
-- `curl http://127.0.0.1:18480/healthz` 返回 200，`state.json` 的 `rev` 连续；
-- `data/backups/` 备份数量与迁移前一致，历史备份可正常恢复；
-- `https://hev.peachyjoy.top` 首页 302、`/login` 200、未授权资源 401；
-- 旧目录删除后服务无感知，容器仍在 `unless-stopped` 策略下自动重启。
-
-## 文档
-
-| 文档 | 内容 |
-| --- | --- |
-| [01-环境兼容性评估](docs/01-环境兼容性评估.md) | 操作系统、内核、Docker、资源配额实测与自构建可行性结论 |
-| [02-性能影响评估](docs/02-性能影响评估.md) | CPU、内存、磁盘 IO、网络带宽的量化实测与结论 |
-| [03-部署操作手册](docs/03-部署操作手册.md) | 部署步骤、登录配置、数据备份恢复、日常运维、故障排查 |
-| [04-域名反代与自启动配置](docs/04-域名反代与自启动配置.md) | hev 子域名 Nginx/Xray 配置、验证记录、开机自启动与镜像构建说明 |
+如需从源码自行构建，在 `docker-compose.yml` 中补回 `build: .`，再执行 `docker compose up -d --build`。
 
 ## 关键实测指标
 
@@ -121,7 +96,6 @@ docker compose up -d --build --force-recreate
 app/      前端（含 vendor 本地依赖、boot.js 鉴权引导）
 server/   Node 服务（登录、会话、静态托管、数据持久化）
 scripts/  部署、初始化、备份、恢复、口令散列
-docs/     评估报告与运维手册
 data/     运行数据（自动生成）
 ```
 

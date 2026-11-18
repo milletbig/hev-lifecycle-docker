@@ -2,10 +2,7 @@ name: hev-lifecycle
 
 services:
   hev-lifecycle:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: hev-lifecycle:1.0.0
+    image: ghcr.io/milletbig/hev-lifecycle-docker:1.0.1
     container_name: hev-lifecycle
     restart: unless-stopped
     init: true
@@ -17,8 +14,8 @@ services:
       - "${HEV_BIND_ADDR:-0.0.0.0}:${HEV_PORT:-18480}:8080"
 
     volumes:
-      # 业务数据、自动备份、会话密钥全部落在宿主机 /home/shawn/hev-lifecycle/data
-      - "${HEV_DATA_DIR:-/home/shawn/hev-lifecycle/data}:/data"
+      # 业务数据、自动备份、会话密钥默认落在宿主机 /opt/hev-lifecycle/data
+      - "${HEV_DATA_DIR:-/opt/hev-lifecycle/data}:/data"
 
     read_only: true
     tmpfs:

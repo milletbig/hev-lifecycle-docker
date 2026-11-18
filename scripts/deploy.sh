@@ -50,8 +50,9 @@ fi
 
 bash scripts/init-host.sh
 
-log "开始构建镜像并启动容器…"
-docker compose up -d --build
+log "拉取镜像并启动容器…"
+docker compose pull
+docker compose up -d
 
 log "等待健康检查…"
 for i in $(seq 1 30); do
