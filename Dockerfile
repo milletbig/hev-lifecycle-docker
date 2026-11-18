@@ -9,7 +9,7 @@ ENV NODE_ENV=production \
 
 LABEL org.opencontainers.image.title="hev-lifecycle" \
       org.opencontainers.image.description="混动车全生命周期记录（带登录鉴权与服务端持久化）" \
-      org.opencontainers.image.version="1.0.2"
+      org.opencontainers.image.version="1.0.3"
 
 # 专用非 root 账号，避免与宿主机既有 uid 冲突
 RUN addgroup -S -g 10001 app && adduser -S -u 10001 -G app app

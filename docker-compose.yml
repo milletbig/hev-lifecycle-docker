@@ -2,7 +2,7 @@ name: hev-lifecycle
 
 services:
   hev-lifecycle:
-    image: ghcr.io/milletbig/hev-lifecycle-docker:1.0.2
+    image: ghcr.io/milletbig/hev-lifecycle-docker:1.0.3
     container_name: hev-lifecycle
     restart: unless-stopped
     init: true

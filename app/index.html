@@ -373,6 +373,12 @@
                             <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id"></el-option>
                         </el-select>
                     </el-form-item>
+                    <el-form-item label="排序方式">
+                        <el-select v-model="recordSortMode" style="width: 120px;" @change="handleRecordSortModeChange">
+                            <el-option label="添加时间" value="time"></el-option>
+                            <el-option label="里程倒序" value="mileage"></el-option>
+                        </el-select>
+                    </el-form-item>
                 </el-form>
 
                 <div ref="recordsTableWrap">
@@ -387,7 +393,7 @@
                             <template #default="scope">
                                 <span class="drag-handle"
                                     :class="{ 'drag-handle-disabled': hasMileageInfo(scope.row) }"
-                                    :title="hasMileageInfo(scope.row) ? '含里程记录按里程倒序展示' : '拖拽调整顺序'"
+                                    :title="hasMileageInfo(scope.row) ? '含里程记录不支持手动排序' : '拖拽调整顺序'"
                                     :draggable="canEdit && !hasMileageInfo(scope.row)"
                                     @dragstart="onDragStart($event, scope.row)"
                                     @dragend="onDragEnd">≡</span>

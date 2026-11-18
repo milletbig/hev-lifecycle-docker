@@ -87,6 +87,7 @@
                 const formatSoc = (val) => (val === null || val === undefined || val === '') ? '-' : val;
 
                 const tableFilter = reactive({ dateRange: [], recordType: '', categoryId: '' });
+                const recordSortMode = ref('time');
 
                 const activeRecords = computed(() => {
                     return records.value.filter(r => r.vehicleId === currentVehicleId.value);
@@ -249,7 +250,8 @@
                     return ((Number(r.hev) || 0) + (Number(r.ev) || 0)) > 0;
                 };
 
-                // 表格排序：日期倒序分组；组内含里程记录按里程倒序，其余保持手动顺序
+                // 表格排序：日期倒序分组；默认保持添加时间倒序（新增置顶/手动顺序），
+                // 切换“里程倒序”后组内含里程记录按里程数值倒序排列
                 const sortedTableRecords = computed(() => {
                     const buckets = new Map();
                     filteredTableRecords.value.forEach(r => {
@@ -261,9 +263,13 @@
                     const result = [];
                     dates.forEach(date => {
                         const list = buckets.get(date);
-                        const mileageList = list.filter(hasMileageInfo).sort((a, b) => getMileage(b) - getMileage(a));
-                        const manualList = list.filter(r => !hasMileageInfo(r));
-                        result.push(...mileageList, ...manualList);
+                        if (recordSortMode.value === 'mileage') {
+                            const mileageList = list.filter(hasMileageInfo).sort((a, b) => getMileage(b) - getMileage(a));
+                            const manualList = list.filter(r => !hasMileageInfo(r));
+                            result.push(...mileageList, ...manualList);
+                        } else {
+                            result.push(...list);
+                        }
                     });
                     return result;
                 });
@@ -554,6 +560,11 @@
                         }).catch(() => {});
                 };
 
+                // 切换排序方式后回到第一页，避免停留在越界页码
+                const handleRecordSortModeChange = () => {
+                    currentPage.value = 1;
+                };
+
                 const handleRecordTypeChange = () => {
                     form.categoryId = ''; form.categoryName = ''; form.subCategory = ''; form.subCategoryList = [];
                     form.liters = 0; form.kwh = null;
@@ -711,7 +722,7 @@
                     }
                     if (hasMileageInfo(row)) {
                         event.preventDefault();
-                        ElementPlus.ElMessage.warning('含里程的记录按里程倒序展示，无需手动排序');
+                        ElementPlus.ElMessage.warning('含里程的记录不支持手动排序');
                         return;
                     }
                     draggingId.value = row.id;
@@ -1814,6 +1825,7 @@
                     categories, records, activeRecords, form, currentCategory, groupedRecords, hasMileageInfo,
                     filteredCategories, currentPage, pageSize, requiresMileage, showSubCatPie, formatSoc,
                     tableFilter, filteredTableRecords, tableStats, maintenanceInfo, insuranceInfo, inspectionInfo,
+                    recordSortMode, handleRecordSortModeChange,
                     handleRecordTypeChange, handleCategoryChange, saveRecord, deleteRecord,
                     handleSocInput, validateSoc,
                     recordsTableWrap, recordRowClassName, onDragStart, onDragEnd,
