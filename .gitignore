@@ -1,0 +1,9 @@
+# 构建产物、运行数据与本地覆盖配置不入库
+data/
+.env
+*.log
+node_modules/
+
+# 服务器专属运维记录与配置备份（含域名、反代、证书等信息，禁止公开）
+docs/
+config-backup/

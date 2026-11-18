@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>混动车全生命周期记录</title>
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="/vendor/element-plus.css" />
+    <style>
+        body { font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f7fa; }
+        #app { max-width: 1300px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1); }
+        .chart-container { height: 230px; width: 100%; margin-bottom: 0; }
+        .chart-row > .el-col { margin-bottom: 16px; }
+        .el-form-item { margin-bottom: 18px; }
+        .chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #ebeef5; flex-wrap: wrap; gap: 10px; }
+        /* 图表响应式：按屏幕宽度统一缩放画布高度，窄屏时单列堆叠 */
+        @media (max-width: 1200px) {
+            #app { padding: 16px; }
+            .chart-container { height: 220px; }
+        }
+        @media (max-width: 992px) {
+            .chart-container { height: 210px; }
+        }
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            #app { padding: 12px; border-radius: 6px; }
+            .chart-container { height: 200px; }
+        }
+        @media (max-width: 480px) {
+            .chart-container { height: 180px; }
+        }
+        .el-table th.col-nowrap-header .cell { white-space: nowrap; }
+        /* 电量输入与桩端/车端选择同行展示，窄屏自动换行 */
+        .kwh-row { display: flex; align-items: center; gap: 10px; width: 100%; flex-wrap: wrap; }
+        .kwh-row .kwh-input { flex: 1 1 120px; min-width: 0; }
+        .kwh-row .el-radio-group { flex: 0 0 auto; }
+        /* 记录拖拽排序 */
+        .drag-handle { cursor: grab; user-select: none; color: #909399; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 3px; }
+        .drag-handle:hover { color: #409EFF; background: #ecf5ff; }
+        .drag-handle:active { cursor: grabbing; }
+        .el-table__row.drag-row-dragging td { opacity: .45; }
+        .el-table__row.drag-row-over td { background: #ecf5ff !important; }
+        .category-sort-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #ebeef5; font-size: 13px; }
+        .category-sort-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .category-sort-row:last-child { border-bottom: none; }
+        .category-sort-dialog { max-width: 460px; }
+        
+        /* 管家卡片样式 */
+        .maint-card { background: #fdf6ec; border-left: 5px solid #e6a23c; border-radius: 4px; padding: 15px; margin-bottom: 20px; font-size: 13px; color: #606266; }
+        .maint-title { font-weight: bold; color: #e6a23c; font-size: 15px; margin-bottom: 8px; }
+        .reminder-item { font-size: 12.5px; line-height: 1.6; border-bottom: 1px dashed #f5dab1; padding-bottom: 8px; margin-bottom: 8px; }
+        .reminder-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        .text-danger { color: #F56C6C; font-weight: bold; }
+        .stats-summary { font-size: 14px; font-weight: bold; background: #f4f4f5; padding: 8px 15px; border-radius: 4px; }
+
+        /* ================= 移动端响应式适配（320px - 767px） ================= */
+        html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+        html, body { max-width: 100%; overflow-x: hidden; }
+        .el-col, .chart-container, .el-form-item__content { min-width: 0; }
+        .el-table { max-width: 100%; }
+
+        @media (max-width: 767px) {
+            body { padding: 8px; }
+            #app { padding: 10px 8px; border-radius: 6px; }
+
+            /* 取消栅格沟槽的负边距，避免窄屏出现横向溢出 */
+            #app .el-row { margin-left: 0 !important; margin-right: 0 !important; }
+            #app .el-col { padding-left: 0 !important; padding-right: 0 !important; }
+
+            /* 表单标签改为上下结构，固定 label 宽度不再挤压输入控件 */
+            .el-form-item { display: block; margin-bottom: 14px; }
+            .el-form-item__label {
+                display: block; float: none; width: auto !important;
+                text-align: left; padding: 0 0 4px; line-height: 1.5; font-size: 13px;
+            }
+            .el-form-item__content { margin-left: 0 !important; width: 100%; }
+
+            /* 行内筛选表单单列铺满 */
+            .el-form--inline .el-form-item { display: block; width: 100%; margin-right: 0; }
+            .el-form--inline .el-form-item__content { width: 100%; }
+            .el-form--inline .el-date-editor,
+            .el-form--inline .el-select,
+            .el-form--inline .el-input,
+            .el-form--inline .el-input-number { width: 100% !important; }
+
+            /* 记录区标题与统计栏纵向排列 */
+            .records-header { flex-direction: column; align-items: stretch !important; gap: 8px; }
+            .stats-summary { width: 100%; box-sizing: border-box; font-size: 12.5px; padding: 6px 10px; line-height: 1.6; }
+
+            /* 标签统一左对齐，避免沿桌面端右对齐导致窄屏观感错位 */
+            .el-form-item__label,
+            .el-form--label-right .el-form-item__label { text-align: left; }
+
+            /* 图表头部：标题与时间维度按钮分行 */
+            .chart-header { gap: 8px; }
+            .chart-header .el-radio-group { display: flex; flex-wrap: wrap; gap: 6px; }
+            .chart-header .el-radio-button__inner { padding: 6px 9px; font-size: 12px; }
+
+            /* iOS Safari / 微信内置浏览器：输入框字号 <16px 会在聚焦时自动放大页面 */
+            .el-input__inner,
+            .el-textarea__inner,
+            .el-range-input { font-size: 16px; }
+
+            /* 宽表格保持卡片内横向滑动，单元格更紧凑 */
+            .el-table { font-size: 13px; }
+            .el-table .cell { padding-left: 6px; padding-right: 6px; word-break: break-word; }
+            .el-pagination { flex-wrap: wrap; row-gap: 8px; justify-content: center; }
+
+            /* 弹窗与气泡占满可视宽度，避免固定宽度溢出屏幕 */
+            .el-dialog { width: 92% !important; margin-top: 6vh !important; }
+            .el-dialog__body { padding: 16px 14px; }
+            .el-message-box { width: 92% !important; max-width: 420px; }
+            .el-divider--vertical { display: none; }
+
+            /* 移动端图表适当增高，保证坐标与图例可读 */
+            .chart-container { height: 220px; }
+        }
+
+        @media (max-width: 480px) {
+            body { padding: 6px; }
+            #app { padding: 8px 6px; }
+            .maint-card { padding: 12px; }
+            .chart-container { height: 210px; }
+            h3 { font-size: 16px; }
+            .el-tabs__item { padding: 0 14px; font-size: 14px; }
+            .el-pagination .el-pagination__total { width: 100%; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <el-tabs v-model="activeTab" @tab-click="handleTabClick">
+            <!-- ================= 首页：录入与展示 ================= -->
+            <el-tab-pane label="首页" name="home">
+                <el-row :gutter="20">
+                    <!-- 左侧区域 -->
+                    <el-col :span="8" :xs="24" :sm="24" :md="8">
+                        <!-- 智能管家预测与提醒 (常驻显示) -->
+                        <div class="maint-card">
+                            <div class="maint-title">🛠️ 智能管家提醒</div>
+                            <div style="font-size: 12px; margin-bottom: 8px;">当前最高总里程：{{ maintenanceInfo ? maintenanceInfo.currentMileage : 0 }} km</div>
+                            
+                            <!-- 保养提醒 -->
+                            <div class="reminder-item">
+                                <strong style="color: #303133;">保养：</strong>
+                                <template v-if="maintenanceInfo && maintenanceInfo.hasRecord">
+                                    上次 {{ maintenanceInfo.lastDate }} ({{ maintenanceInfo.lastMileage }}km)<br/>
+                                    预测 <span :class="{'text-danger': maintenanceInfo.remainingKm < 1000 || maintenanceInfo.remainingDays < 30}">{{ maintenanceInfo.targetMileage }}km 或 {{ maintenanceInfo.targetDateStr }}</span>
+                                    (余 <span :class="{'text-danger': maintenanceInfo.remainingKm < 1000}">{{ maintenanceInfo.remainingKm }}</span>km / <span :class="{'text-danger': maintenanceInfo.remainingDays < 30}">{{ maintenanceInfo.remainingDays }}</span>天)
+                                </template>
+                                <template v-else><span style="color: #909399;">暂无有效记录。录入附带里程的记录以激活。</span></template>
+                            </div>
+
+                            <!-- 保险提醒 -->
+                            <div class="reminder-item">
+                                <strong style="color: #303133;">保险：</strong>
+                                <template v-if="insuranceInfo">
+                                    上次投保 {{ insuranceInfo.lastDate }}<br/>
+                                    到期 <span :class="{'text-danger': insuranceInfo.remainingDays < 30}">{{ insuranceInfo.targetDateStr }}</span>
+                                    (剩余 <span :class="{'text-danger': insuranceInfo.remainingDays < 30}">{{ insuranceInfo.remainingDays }}</span>天)
+                                </template>
+                                <template v-else><span style="color: #909399;">暂无有效记录。</span></template>
+                            </div>
+
+                            <!-- 年检提醒 -->
+                            <div class="reminder-item">
+                                <strong style="color: #303133;">年检：</strong>
+                                <template v-if="inspectionInfo">
+                                    上次年检 {{ inspectionInfo.lastDate }}<br/>
+                                    到期 <span :class="{'text-danger': inspectionInfo.remainingDays < 30}">{{ inspectionInfo.targetDateStr }}</span>
+                                    (剩余 <span :class="{'text-danger': inspectionInfo.remainingDays < 30}">{{ inspectionInfo.remainingDays }}</span>天)
+                                </template>
+                                <template v-else><span style="color: #909399;">暂无有效记录。</span></template>
+                            </div>
+                        </div>
+
+                        <h3>新增记录</h3>
+                        <el-form :model="form" label-width="100px" size="default">
+                            <el-form-item label="当前车辆">
+                                <el-select v-model="currentVehicleId" @change="handleVehicleChange" style="width: 100%;">
+                                    <el-option v-for="v in vehicles" :key="v.id" :label="v.name" :value="v.id"></el-option>
+                                </el-select>
+                            </el-form-item>
+
+                            <el-divider border-style="dashed" style="margin: 15px 0;"></el-divider>
+
+                            <el-form-item label="日期">
+                                <el-date-picker v-model="form.date" type="date" placeholder="选择日期" value-format="YYYY-MM-DD" style="width: 100%;"></el-date-picker>
+                            </el-form-item>
+                            
+                            <el-form-item label="收支类型">
+                                <el-radio-group v-model="form.recordType" @change="handleRecordTypeChange">
+                                    <el-radio-button label="expense">支出</el-radio-button>
+                                    <el-radio-button label="income">收入</el-radio-button>
+                                </el-radio-group>
+                            </el-form-item>
+
+                            <el-form-item label="记录类别">
+                                <el-select v-model="form.categoryId" placeholder="请选择一级类别" @change="handleCategoryChange" style="width: 100%;">
+                                    <el-option v-for="cat in filteredCategories" :key="cat.id" :label="cat.name" :value="cat.id"></el-option>
+                                </el-select>
+                            </el-form-item>
+
+                            <el-form-item v-if="currentCategory && currentCategory.hasSub" label="具体项目">
+                                <el-select v-if="currentCategory.name === '保养'" v-model="form.subCategoryList" multiple collapse-tags placeholder="可多选保养项目" style="width: 100%;">
+                                    <el-option v-for="sub in currentCategory.subItems.filter(s => s.active !== false)" :key="sub.id" :label="sub.name" :value="sub.name"></el-option>
+                                </el-select>
+                                <el-select v-else v-model="form.subCategory" placeholder="请选择二级项目" style="width: 100%;">
+                                    <el-option v-for="sub in currentCategory.subItems.filter(s => s.active !== false)" :key="sub.id" :label="sub.name" :value="sub.name"></el-option>
+                                </el-select>
+                            </el-form-item>
+
+                            <el-form-item v-if="currentCategory && currentCategory.name === '加油'" label="升数 (L)">
+                                <el-input-number v-model="form.liters" :min="0" :precision="2" :step="1" style="width: 100%;"></el-input-number>
+                            </el-form-item>
+
+                            <el-form-item v-if="currentCategory && currentCategory.name === '充电'" label="电量（kWh）">
+                                <div class="kwh-row">
+                                    <el-input-number v-model="form.kwh" :min="0" :precision="2" :step="1" class="kwh-input" placeholder="选填"></el-input-number>
+                                    <el-radio-group v-model="form.kwhSource">
+                                        <el-radio-button label="pile">桩端</el-radio-button>
+                                        <el-radio-button label="vehicle">车端</el-radio-button>
+                                    </el-radio-group>
+                                </div>
+                            </el-form-item>
+
+                            <template v-if="currentCategory && currentCategory.name === '充电'">
+                                <el-form-item label="起始SOC(%)">
+                                    <el-input
+                                        :model-value="form.startSoc === null || form.startSoc === undefined ? '' : form.startSoc"
+                                        @update:model-value="val => handleSocInput('startSoc', val)"
+                                        @blur="validateSoc('startSoc')"
+                                        maxlength="3"
+                                        inputmode="numeric"
+                                        clearable
+                                        placeholder="选填"
+                                        style="width: 100%;">
+                                    </el-input>
+                                </el-form-item>
+
+                                <el-form-item label="终止SOC(%)">
+                                    <el-input
+                                        :model-value="form.endSoc === null || form.endSoc === undefined ? '' : form.endSoc"
+                                        @update:model-value="val => handleSocInput('endSoc', val)"
+                                        @blur="validateSoc('endSoc')"
+                                        maxlength="3"
+                                        inputmode="numeric"
+                                        clearable
+                                        placeholder="选填"
+                                        style="width: 100%;">
+                                    </el-input>
+                                </el-form-item>
+                            </template>
+
+                            <el-form-item label="备注">
+                                <el-input v-model="form.remark" maxlength="100" clearable placeholder="选填，通用备注信息"></el-input>
+                            </el-form-item>
+
+                            <el-form-item :label="form.recordType === 'income' ? '收入金额(元)' : '支出金额(元)'">
+                                <el-input-number v-model="form.amount" :min="0" :precision="2" :step="10" style="width: 100%;"></el-input-number>
+                            </el-form-item>
+
+                            <template v-if="currentCategory && currentCategory.requireMileage">
+                                <el-form-item label="HEV里程(km)">
+                                    <el-input-number v-model="form.hev" :min="0" :step="10" style="width: 100%;"></el-input-number>
+                                </el-form-item>
+
+                                <el-form-item label="EV里程(km)">
+                                    <el-input-number v-model="form.ev" :min="0" :step="10" style="width: 100%;"></el-input-number>
+                                </el-form-item>
+
+                                <el-form-item label="总里程(km)">
+                                    <el-input-number v-model="form.totalMileage" :min="0" :step="10" style="width: 100%;" placeholder="可自动计算或手动输入"></el-input-number>
+                                </el-form-item>
+                            </template>
+
+                            <el-form-item>
+                                <el-button type="primary" @click="saveRecord">保存记录</el-button>
+                            </el-form-item>
+                        </el-form>
+                    </el-col>
+
+                    <!-- 右侧图表区域 -->
+                    <el-col :span="16" :xs="24" :sm="24" :md="16">
+                        <div class="chart-header">
+                            <span style="font-weight: bold; font-size: 16px;">数据分析图表 ({{ currentVehicleName }})</span>
+                            <el-radio-group v-model="chartPeriod" @change="updateCharts" size="small">
+                                <el-radio-button label="all">全部</el-radio-button>
+                                <el-radio-button label="thisyear">今年</el-radio-button>
+                                <el-radio-button label="year">年</el-radio-button>
+                                <el-radio-button label="quarter">季度</el-radio-button>
+                                <el-radio-button label="last12months">近一年</el-radio-button>
+                                <el-radio-button label="last6months">近半年</el-radio-button>
+                            </el-radio-group>
+                        </div>
+                        
+                        <!-- 四行两列标准网格 -->
+                        <!-- 第 1 行: 里程总览 & 综合净费用走势 -->
+                        <el-row :gutter="16" class="chart-row">
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartMileage" class="chart-container"></div></el-col>
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartCost" class="chart-container"></div></el-col>
+                        </el-row>
+
+                        <!-- 第 2 行: 纯电比例 & 综合能耗曲线 -->
+                        <el-row :gutter="16" class="chart-row">
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartEvRatio" class="chart-container"></div></el-col>
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartTotalEnergy" class="chart-container"></div></el-col>
+                        </el-row>
+
+                        <!-- 第 3 行: 区间电耗 & 油耗分析 -->
+                        <el-row :gutter="16" class="chart-row">
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartEv" class="chart-container"></div></el-col>
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartGas" class="chart-container"></div></el-col>
+                        </el-row>
+
+                        <!-- 第 4 行: 分类支出占比 & 金额走势 -->
+                        <el-row :gutter="16" class="chart-row">
+                            <el-col :span="12" :xs="24" :sm="24" :md="12"><div id="chartCategoryPie" class="chart-container"></div></el-col>
+                            <el-col :span="12" :xs="24" :sm="24" :md="12">
+                                <div style="position: relative;">
+                                    <div style="position: absolute; top: 0px; right: 10px; z-index: 10;">
+                                        <el-select v-model="selectedChartCategory" size="small" style="width: 110px;" @change="updateCharts" placeholder="选择分类">
+                                            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.name"></el-option>
+                                        </el-select>
+                                    </div>
+                                    <div id="chartCategoryTrend" class="chart-container"></div>
+                                </div>
+                            </el-col>
+                        </el-row>
+
+                        <!-- 辅助: 子项目占比（保留原有条件展示能力） -->
+                        <el-row :gutter="16" class="chart-row" v-show="showSubCatPie">
+                            <el-col :span="12" :xs="24" :sm="24" :md="12">
+                                <div id="chartSubCategoryPie" class="chart-container"></div>
+                            </el-col>
+                        </el-row>
+
+                    </el-col>
+                </el-row>
+
+                <el-divider></el-divider>
+
+                <!-- 事件记录表格与高级筛选 -->
+                <div class="records-header" style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px;">
+                    <h3>事件记录 ({{ currentVehicleName }})</h3>
+                    <div class="stats-summary">
+                        当前筛选合计：
+                        <span style="color: #F56C6C;">支出 {{ tableStats.exp.toFixed(2) }} 元</span> | 
+                        <span style="color: #67C23A;">收入 {{ tableStats.inc.toFixed(2) }} 元</span>
+                    </div>
+                </div>
+
+                <el-form :inline="true" :model="tableFilter" size="small" style="background: #fafafa; padding: 12px 15px 0 15px; border-radius: 4px; margin-bottom: 15px;">
+                    <el-form-item label="日期范围">
+                        <el-date-picker v-model="tableFilter.dateRange" type="daterange" :single-panel="isCompact" value-format="YYYY-MM-DD" clearable start-placeholder="开始日期" end-placeholder="结束日期" placeholder="选择范围" style="width: 220px;"></el-date-picker>
+                    </el-form-item>
+                    <el-form-item label="收支类型">
+                        <el-select v-model="tableFilter.recordType" clearable placeholder="全部类型" style="width: 100px;">
+                            <el-option label="支出" value="expense"></el-option>
+                            <el-option label="收入" value="income"></el-option>
+                        </el-select>
+                    </el-form-item>
+                    <el-form-item label="一级分类">
+                        <el-select v-model="tableFilter.categoryId" clearable placeholder="全部分类" style="width: 120px;">
+                            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id"></el-option>
+                        </el-select>
+                    </el-form-item>
+                </el-form>
+
+                <div ref="recordsTableWrap">
+                <el-table :data="paginatedRecords" style="width: 100%" border stripe :row-class-name="recordRowClassName">
+                    <el-table-column label="排序" width="56" align="center">
+                        <template #default="scope">
+                            <span class="drag-handle" title="拖拽调整顺序" :draggable="canEdit"
+                                @dragstart="onDragStart($event, scope.row)"
+                                @dragend="onDragEnd">≡</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="date" label="日期" width="110"></el-table-column>
+                    <el-table-column label="收/支" width="70">
+                        <template #default="scope">
+                            <el-tag :type="scope.row.recordType === 'income' ? 'success' : 'danger'" size="small">
+                                {{ scope.row.recordType === 'income' ? '收入' : '支出' }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="categoryName" label="类别" width="90"></el-table-column>
+                    <el-table-column prop="subCategory" label="具体项目" width="120"></el-table-column>
+                    <el-table-column label="金额(元)" width="100">
+                        <template #default="scope">
+                            <span :style="{ color: scope.row.recordType === 'income' ? '#67C23A' : '#F56C6C', fontWeight: 'bold' }">
+                                {{ scope.row.recordType === 'income' ? '+' : '-' }}{{ scope.row.amount }}
+                            </span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="总里程" width="90">
+                        <template #default="scope">
+                            <span v-if="!requiresMileage(scope.row.categoryName)">-</span>
+                            <span v-else>{{ scope.row.totalMileage || (scope.row.hev + scope.row.ev) || 0 }}</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="HEV" width="80">
+                        <template #default="scope">
+                            {{ !requiresMileage(scope.row.categoryName) ? '-' : scope.row.hev }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="EV" width="80">
+                        <template #default="scope">
+                            {{ !requiresMileage(scope.row.categoryName) ? '-' : scope.row.ev }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="liters" label="加油（L）" width="96" label-class-name="col-nowrap-header">
+                        <template #default="scope">{{ scope.row.liters ? scope.row.liters : '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="充电(kWh)" width="104" label-class-name="col-nowrap-header">
+                        <template #default="scope">{{ scope.row.kwh ? scope.row.kwh : '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="起始SOC(%)" min-width="104" label-class-name="col-nowrap-header">
+                        <template #default="scope">{{ formatSoc(scope.row.startSoc) }}</template>
+                    </el-table-column>
+                    <el-table-column label="终止SOC(%)" min-width="104" label-class-name="col-nowrap-header">
+                        <template #default="scope">{{ formatSoc(scope.row.endSoc) }}</template>
+                    </el-table-column>
+                    <el-table-column label="备注" min-width="120">
+                        <template #default="scope">{{ scope.row.remark || '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="146">
+                        <template #default="scope">
+                            <el-button size="small" type="primary" @click="openEditRecord(scope.row)">编辑</el-button>
+                            <el-button size="small" type="danger" @click="deleteRecord(scope.row.id)">删除</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+                </div>
+                <el-pagination 
+                    style="margin-top: 15px;" 
+                    background 
+                    layout="total, prev, pager, next" 
+                    :total="filteredTableRecords.length" 
+                    :page-size="pageSize" 
+                    v-model:current-page="currentPage">
+                </el-pagination>
+            </el-tab-pane>
+
+            <!-- ================= 设置：多车管理、类别、单位与日志 ================= -->
+            <el-tab-pane label="设置" name="settings">
+                
+                <h3>车辆管理</h3>
+                <el-button type="primary" @click="addVehicle" style="margin-bottom: 20px;">新增车辆</el-button>
+                <el-table :data="vehicles" style="width: 100%; max-width: 600px;" border>
+                    <el-table-column prop="name" label="车辆名称" width="200"></el-table-column>
+                    <el-table-column label="操作" width="160">
+                        <template #default="scope">
+                            <el-button size="small" @click="editVehicle(scope.$index)">编辑</el-button>
+                            <el-button size="small" type="danger" @click="deleteVehicle(scope.$index)" :disabled="vehicles.length === 1">删除</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+
+                <el-divider></el-divider>
+                
+                <h3>图表与业务参数设置</h3>
+                <el-form label-width="150px" size="default" style="margin-bottom: 30px; max-width: 600px;">
+                    <el-form-item label="能耗/费用单位">
+                        <el-radio-group v-model="appSettings.costUnit" @change="saveSettings">
+                            <el-radio-button label="元/百公里">元/百公里</el-radio-button>
+                            <el-radio-button label="元/公里">元/公里</el-radio-button>
+                        </el-radio-group>
+                    </el-form-item>
+                    <el-form-item label="油耗单位">
+                        <el-radio-group v-model="appSettings.fuelUnit" @change="saveSettings">
+                            <el-radio-button label="L/百公里">L/百公里</el-radio-button>
+                            <el-radio-button label="L/公里">L/公里</el-radio-button>
+                        </el-radio-group>
+                    </el-form-item>
+                    <el-form-item label="保养提醒里程(km)">
+                        <el-input-number v-model="appSettings.maintKm" :min="1000" :step="1000" @change="saveSettings"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="保养提醒间隔(月)">
+                        <el-input-number v-model="appSettings.maintMonths" :min="1" :step="1" @change="saveSettings"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="CS折算系数 η">
+                        <el-input-number v-model="appSettings.csDuty" :min="0.3" :max="0.8" :step="0.05" :precision="2" @change="saveSettings"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="自动备份周期(天)">
+                        <el-input-number v-model="appSettings.backupIntervalDays" :min="1" :max="365" :step="1" @change="saveSettings"></el-input-number>
+                        <span style="margin-left: 10px; color: #909399; font-size: 12px;">默认 7 天；每次记录保存后也会立即备份，仅保留最新 30 份</span>
+                    </el-form-item>
+                </el-form>
+
+                <el-divider></el-divider>
+
+                <h3>类别管理</h3>
+                <div style="margin-bottom: 20px;">
+                    <el-button type="danger" @click="addCategory('expense')">新增支出类别</el-button>
+                    <el-button type="success" @click="addCategory('income')">新增收入类别</el-button>
+                    <el-button :disabled="!canManage" @click="openCategorySort">手动排序</el-button>
+                </div>
+                
+                <el-table :data="categories" style="width: 100%" border>
+                    <el-table-column label="收/支" width="80">
+                        <template #default="scope">
+                            <el-tag :type="scope.row.type === 'income' ? 'success' : 'danger'" size="small">
+                                {{ scope.row.type === 'income' ? '收入' : '支出' }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="name" label="一级类别" width="100"></el-table-column>
+                    <el-table-column label="是否记录里程" width="110" align="center">
+                        <template #default="scope">
+                            <el-switch v-model="scope.row.requireMileage" @change="saveCategories"></el-switch>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="启用二级菜单" width="110" align="center">
+                        <template #default="scope">
+                            <el-switch v-model="scope.row.hasSub" @change="saveCategories"></el-switch>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="二级标签(回车添加, 点击标签重命名, ×删除)">
+                        <template #default="scope">
+                            <template v-if="scope.row.hasSub">
+                                <el-tag 
+                                    v-for="tag in scope.row.subItems" 
+                                    :key="tag.id" 
+                                    :type="tag.active === false ? 'info' : undefined"
+                                    :effect="tag.active === false ? 'plain' : 'light'"
+                                    closable 
+                                    @close="removeSubItem(scope.row, tag.id)"
+                                    @click="onTagClick(scope.row, tag)"
+                                    :title="tag.active === false ? '已停用，点击启用' : '点击重命名'"
+                                    style="margin-right: 8px; margin-bottom: 5px; cursor: pointer;">
+                                    {{ tag.name }}{{ tag.active === false ? '（已停用）' : '' }}
+                                </el-tag>
+                                <el-input
+                                    v-model="scope.row.newSubInput"
+                                    placeholder="输入后回车"
+                                    size="small"
+                                    style="width: 120px;"
+                                    @keyup.enter="addSubItem(scope.row)"
+                                ></el-input>
+                            </template>
+                            <span v-else>不可用</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="160">
+                        <template #default="scope">
+                            <el-button size="small" @click="editCategory(scope.$index)">编辑</el-button>
+                            <el-button size="small" type="danger" @click="deleteCategory(scope.$index)">删除</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+                <div style="display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap;">
+                    <span style="font-size: 12px; color: #909399;">点击标签重命名或启用；× 仅移除标签选项，不影响历史记录展示。</span>
+                    <el-button size="small" :disabled="!canManage" @click="openTagOpsDialog">合并 / 停用</el-button>
+                    <el-button v-if="renameSnapshot && canManage" size="small" @click="undoLastRename">撤销上次标签操作（{{ renameSnapshot.oldName }} → {{ renameSnapshot.newName }}）</el-button>
+                </div>
+
+                <h4 style="margin: 18px 0 8px; font-size: 14px;">操作日志（最近 20 条）</h4>
+                <el-table :data="opLogs.slice(0, 20)" size="small" border style="width: 100%;" empty-text="暂无操作日志">
+                    <el-table-column label="时间" width="170">
+                        <template #default="scope">{{ formatLogTime(scope.row.ts) }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="90">
+                        <template #default="scope">{{ logActionLabel(scope.row.action) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="categoryName" label="类别" width="100"></el-table-column>
+                    <el-table-column label="标签变更" min-width="180">
+                        <template #default="scope">
+                            {{ scope.row.oldName || '-' }}<span v-if="scope.row.newName"> → {{ scope.row.newName }}</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="affectedRecords" label="影响条数" width="90"></el-table-column>
+                    <el-table-column prop="result" label="结果" width="80"></el-table-column>
+                </el-table>
+                <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
+                    <el-button size="small" @click="loadOpLogs">刷新日志</el-button>
+                    <span style="font-size: 12px; color: #909399;">日志仅保存在本地，最多保留 1000 条。</span>
+                </div>
+
+                <el-divider></el-divider>
+                <h4 style="margin: 0 0 10px; font-size: 14px;">权限与角色</h4>
+                <el-form label-width="100px" size="small" style="max-width: 460px;">
+                    <el-form-item label="当前角色">
+                        <el-select v-model="appSettings.role" style="width: 100%;" @change="saveSettings">
+                            <el-option label="管理员（全部权限）" value="admin"></el-option>
+                            <el-option label="编辑者（记账，不可维护标签）" value="editor"></el-option>
+                            <el-option label="只读（仅查看）" value="viewer"></el-option>
+                        </el-select>
+                    </el-form-item>
+                </el-form>
+                <p style="font-size: 12px; color: #909399; margin: 0 0 10px;">
+                    本地角色用于防误操作，不构成账号级安全隔离：任何能打开本页的人都可以切换角色。
+                </p>
+
+                <el-divider></el-divider>
+
+                <!-- 数据管理 -->
+                <h3>数据备份与恢复 (纯本地零依赖)</h3>
+                <el-alert title="所有数据均保存在您的浏览器本地缓存中。建议定期导出备份，以免清理浏览器缓存导致数据丢失。" type="warning" show-icon style="margin-bottom: 20px;"></el-alert>
+                
+                <el-button type="success" size="large" @click="exportData">备份数据 (导出 JSON)</el-button>
+                <el-divider direction="vertical"></el-divider>
+                <el-button type="primary" size="large" @click="exportCSV">导出表格 (CSV)</el-button>
+                <el-divider direction="vertical"></el-divider>
+                <input type="file" id="fileInput" accept=".json" style="display: none" @change="importData">
+                <el-button type="warning" size="large" @click="triggerFileInput">恢复数据 (导入 JSON)</el-button>
+            </el-tab-pane>
+        </el-tabs>
+
+        <el-dialog v-model="tagOpsVisible" title="标签合并 / 停用" width="min(540px, 92vw)" :close-on-click-modal="false">
+            <el-form label-width="100px" size="small">
+                <el-form-item label="类别">
+                    <el-select v-model="tagOps.categoryId" style="width: 100%;" @change="onTagOpsCategoryChange">
+                        <el-option v-for="c in subCategories" :key="c.id" :label="c.name" :value="c.id"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="源标签">
+                    <el-select v-model="tagOps.sourceId" style="width: 100%;">
+                        <el-option v-for="t in tagOpsTags" :key="t.id" :label="t.active === false ? t.name + '（已停用）' : t.name" :value="t.id"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="操作">
+                    <el-radio-group v-model="tagOps.action">
+                        <el-radio label="merge">合并到目标标签</el-radio>
+                        <el-radio label="deactivate">停用标签</el-radio>
+                    </el-radio-group>
+                </el-form-item>
+                <el-form-item v-if="tagOps.action === 'merge'" label="目标标签">
+                    <el-select v-model="tagOps.targetId" style="width: 100%;">
+                        <el-option v-for="t in tagOpsTargets" :key="t.id" :label="t.active === false ? t.name + '（已停用）' : t.name" :value="t.id"></el-option>
+                    </el-select>
+                </el-form-item>
+            </el-form>
+            <div style="font-size: 12px; color: #606266; background: #f5f7fa; padding: 10px 12px; border-radius: 4px;">
+                影响历史记录：<strong>{{ tagOpsAffected }}</strong> 条。合并会同步替换标签并停用源标签；停用仅影响新记录下拉，不改动历史数据。
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;">
+                <el-button @click="tagOpsVisible = false">取消</el-button>
+                <el-button type="primary" @click="runTagOps">确认执行</el-button>
+            </div>
+        </el-dialog>
+
+        <el-dialog v-model="sortDialogVisible" title="类别手动排序" width="92%" class="category-sort-dialog" :close-on-click-modal="false">
+            <div style="max-height: 420px; overflow-y: auto; border: 1px solid #ebeef5; border-radius: 4px;">
+                <div v-for="(cat, idx) in sortDraft" :key="cat.id" class="category-sort-row">
+                    <el-tag :type="cat.type === 'income' ? 'success' : 'danger'" size="small">{{ cat.type === 'income' ? '收入' : '支出' }}</el-tag>
+                    <span style="flex: 1;">{{ cat.name }}</span>
+                    <el-button size="small" :disabled="idx === 0" @click="moveCategory(idx, -1)">上移</el-button>
+                    <el-button size="small" :disabled="idx === sortDraft.length - 1" @click="moveCategory(idx, 1)">下移</el-button>
+                </div>
+            </div>
+            <p style="font-size: 12px; color: #909399; margin: 10px 0 0;">保存后按自定义顺序展示，新增类别默认追加到末尾；可随时恢复固定顺序。</p>
+            <template #footer>
+                <el-button @click="sortDialogVisible = false">取消</el-button>
+                <el-button @click="resetCategoryOrder">恢复固定顺序</el-button>
+                <el-button type="primary" @click="saveCategoryOrder">保存排序</el-button>
+            </template>
+        </el-dialog>
+
+        <el-dialog v-model="editVisible" title="编辑记录" width="min(560px, 92vw)" :close-on-click-modal="false">
+            <el-form label-width="100px">
+                <el-form-item label="日期" required>
+                    <el-date-picker v-model="editForm.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width: 100%;"></el-date-picker>
+                </el-form-item>
+                <el-form-item label="收支类型">
+                    <el-radio-group v-model="editForm.recordType" @change="handleEditRecordTypeChange">
+                        <el-radio-button label="expense">支出</el-radio-button>
+                        <el-radio-button label="income">收入</el-radio-button>
+                    </el-radio-group>
+                </el-form-item>
+                <el-form-item label="记录类别" required>
+                    <el-select v-model="editForm.categoryId" placeholder="请选择类别" style="width: 100%;" @change="handleEditCategoryChange">
+                        <el-option v-for="c in editCategories" :key="c.id" :label="c.name" :value="c.id"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item v-if="editTargetCategory && editTargetCategory.hasSub" label="具体项目">
+                    <el-select v-model="editForm.subCategoryList" :multiple="editForm.categoryName === '保养'" clearable filterable placeholder="请选择具体项目" style="width: 100%;">
+                        <el-option v-for="s in editActiveSubItems" :key="s.id" :label="s.name" :value="s.name"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item :label="editForm.recordType === 'income' ? '收入金额(元)' : '支出金额(元)'" required>
+                    <el-input-number v-model="editForm.amount" :min="0" :precision="2" :step="10" style="width: 100%;"></el-input-number>
+                </el-form-item>
+                <el-form-item v-if="editForm.categoryName === '加油'" label="升数 (L)">
+                    <el-input-number v-model="editForm.liters" :min="0" :precision="2" :step="1" style="width: 100%;"></el-input-number>
+                </el-form-item>
+                <template v-if="editForm.categoryName === '充电'">
+                    <el-form-item label="电量（kWh）">
+                        <div class="kwh-row">
+                            <el-input-number v-model="editForm.kwh" :min="0" :precision="2" :step="1" class="kwh-input" placeholder="选填"></el-input-number>
+                            <el-radio-group v-model="editForm.kwhSource">
+                                <el-radio-button label="pile">桩端</el-radio-button>
+                                <el-radio-button label="vehicle">车端</el-radio-button>
+                            </el-radio-group>
+                        </div>
+                    </el-form-item>
+                    <el-form-item label="起始SOC(%)">
+                        <el-input :model-value="editForm.startSoc === null || editForm.startSoc === undefined ? '' : editForm.startSoc"
+                            @update:model-value="val => handleEditSocInput('startSoc', val)" @blur="validateEditSoc('startSoc')"
+                            maxlength="3" inputmode="numeric" clearable placeholder="选填" style="width: 100%;"></el-input>
+                    </el-form-item>
+                    <el-form-item label="终止SOC(%)">
+                        <el-input :model-value="editForm.endSoc === null || editForm.endSoc === undefined ? '' : editForm.endSoc"
+                            @update:model-value="val => handleEditSocInput('endSoc', val)" @blur="validateEditSoc('endSoc')"
+                            maxlength="3" inputmode="numeric" clearable placeholder="选填" style="width: 100%;"></el-input>
+                    </el-form-item>
+                </template>
+                <template v-if="editForm.categoryName && requiresMileage(editForm.categoryName)">
+                    <el-form-item label="总里程">
+                        <el-input-number v-model="editForm.totalMileage" :min="0" :precision="0" :step="1" style="width: 100%;"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="HEV">
+                        <el-input-number v-model="editForm.hev" :min="0" :precision="0" :step="1" style="width: 100%;"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="EV">
+                        <el-input-number v-model="editForm.ev" :min="0" :precision="0" :step="1" style="width: 100%;"></el-input-number>
+                    </el-form-item>
+                </template>
+                <el-form-item label="备注">
+                    <el-input v-model="editForm.remark" type="textarea" :rows="2" maxlength="200" show-word-limit></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="editVisible = false">取消</el-button>
+                <el-button type="primary" :loading="editSaving" @click="saveEditRecord">保存修改</el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <!-- 依赖本地固化；boot.js 负责会话校验、服务端数据水合后再启动应用 -->
+    <script src="/assets/boot.js"></script>
+</body>
+</html>

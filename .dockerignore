@@ -1,0 +1,12 @@
+# 构建上下文忽略文件：镜像内只需要 server/ 与 app/
+data/
+docs/
+scripts/
+config-backup/
+.env
+*.md
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml

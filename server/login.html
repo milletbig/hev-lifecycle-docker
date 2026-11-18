@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>登录 · 混动车全生命周期记录</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+            background: linear-gradient(135deg, #1f2d3d 0%, #2b3a4d 45%, #3a4d63 100%);
+            display: flex; align-items: center; justify-content: center; padding: 24px;
+        }
+        .card {
+            width: 100%; max-width: 400px; background: #fff; border-radius: 12px;
+            box-shadow: 0 18px 48px rgba(0, 0, 0, .28); padding: 36px 32px 28px;
+        }
+        .logo { width: 52px; height: 52px; border-radius: 14px; background: linear-gradient(135deg, #409eff, #2d7ff0); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 26px; margin-bottom: 18px; }
+        h1 { font-size: 20px; color: #1f2d3d; margin: 0 0 6px; letter-spacing: .5px; }
+        .sub { font-size: 13px; color: #909399; margin: 0 0 26px; }
+        label { display: block; font-size: 13px; color: #606266; margin: 0 0 7px; }
+        .field { margin-bottom: 16px; }
+        .input-wrap { position: relative; }
+        input[type="text"], input[type="password"] {
+            width: 100%; height: 42px; border: 1px solid #dcdfe6; border-radius: 6px;
+            padding: 0 42px 0 13px; font-size: 14px; color: #303133; outline: none;
+            transition: border-color .15s, box-shadow .15s; background: #fff;
+        }
+        input[type="text"]:focus, input[type="password"]:focus { border-color: #409eff; box-shadow: 0 0 0 3px rgba(64, 158, 255, .12); }
+        .toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: none; background: none; color: #909399; font-size: 12px; cursor: pointer; padding: 6px 8px; border-radius: 4px; }
+        .toggle:hover { color: #409eff; background: #ecf5ff; }
+        .row { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 20px; font-size: 12.5px; color: #909399; }
+        .btn {
+            width: 100%; height: 42px; border: none; border-radius: 6px; font-size: 15px;
+            background: #409eff; color: #fff; cursor: pointer; transition: background .15s; letter-spacing: 2px;
+        }
+        .btn:hover { background: #337ecc; }
+        .btn:disabled { background: #a0cfff; cursor: not-allowed; }
+        .msg { border-radius: 6px; padding: 10px 12px; font-size: 13px; line-height: 1.5; margin-bottom: 16px; display: none; }
+        .msg.error { display: block; background: #fef0f0; color: #f56c6c; border: 1px solid #fde2e2; }
+        .msg.info { display: block; background: #f0f9eb; color: #67c23a; border: 1px solid #e1f3d8; }
+        .foot { margin-top: 22px; padding-top: 16px; border-top: 1px solid #f0f2f5; font-size: 11.5px; color: #b1b3b8; line-height: 1.7; text-align: center; }
+        @media (max-width: 420px) { .card { padding: 28px 20px 22px; } }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <div class="logo">🚗</div>
+        <h1>混动车全生命周期记录</h1>
+        <p class="sub">请登录后访问车辆账本与数据分析</p>
+
+        <div id="msg" class="msg" role="alert" aria-live="polite"></div>
+
+        <form id="loginForm" autocomplete="on" novalidate>
+            <div class="field">
+                <label for="username">账号</label>
+                <div class="input-wrap">
+                    <input id="username" name="username" type="text" autocomplete="username" placeholder="请输入账号" maxlength="64" required autofocus>
+                </div>
+            </div>
+            <div class="field">
+                <label for="password">密码</label>
+                <div class="input-wrap">
+                    <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" maxlength="128" required>
+                    <button type="button" class="toggle" id="togglePwd" aria-label="显示密码">显示</button>
+                </div>
+            </div>
+            <div class="row">
+                <span>连续失败将临时锁定登录</span>
+                <span id="capsHint" style="display:none;color:#e6a23c;">大写锁定已开启</span>
+            </div>
+            <button type="submit" class="btn" id="submitBtn">登 录</button>
+        </form>
+
+        <div class="foot">
+            本系统仅限授权用户使用，所有访问均记录来源 IP 与时间。<br>
+            会话采用 HttpOnly Cookie，退出登录后本机数据缓存将被清除。
+        </div>
+    </main>
+
+    <script>
+        (function () {
+            var form = document.getElementById('loginForm');
+            var msg = document.getElementById('msg');
+            var btn = document.getElementById('submitBtn');
+            var pwd = document.getElementById('password');
+            var user = document.getElementById('username');
+            var toggle = document.getElementById('togglePwd');
+            var capsHint = document.getElementById('capsHint');
+            var lockTimer = null;
+
+            function params() {
+                return new URLSearchParams(location.search);
+            }
+
+            function safeNext() {
+                var next = params().get('next') || '/';
+                if (next.charAt(0) !== '/' || next.charAt(1) === '/' || next.indexOf('\\') !== -1) return '/';
+                return next;
+            }
+
+            function show(text, type) {
+                msg.className = 'msg ' + (type || 'error');
+                msg.textContent = text;
+            }
+
+            function hide() {
+                msg.className = 'msg';
+                msg.textContent = '';
+            }
+
+            if (params().get('logout') === '1') show('已安全退出登录。', 'info');
+
+            toggle.addEventListener('click', function () {
+                var isPwd = pwd.type === 'password';
+                pwd.type = isPwd ? 'text' : 'password';
+                toggle.textContent = isPwd ? '隐藏' : '显示';
+                toggle.setAttribute('aria-label', isPwd ? '隐藏密码' : '显示密码');
+                pwd.focus();
+            });
+
+            pwd.addEventListener('keyup', function (e) {
+                capsHint.style.display = e.getModifierState && e.getModifierState('CapsLock') ? 'inline' : 'none';
+            });
+
+            function startLock(seconds) {
+                clearInterval(lockTimer);
+                var left = seconds;
+                btn.disabled = true;
+                function tick() {
+                    show('登录尝试过于频繁，请在 ' + left + ' 秒后重试。', 'error');
+                    if (left <= 0) {
+                        clearInterval(lockTimer);
+                        btn.disabled = false;
+                        show('可以重新尝试登录。', 'info');
+                        return;
+                    }
+                    left -= 1;
+                }
+                tick();
+                lockTimer = setInterval(tick, 1000);
+            }
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                hide();
+                var username = user.value.trim();
+                var password = pwd.value;
+                if (!username || !password) {
+                    show('请输入账号和密码。', 'error');
+                    return;
+                }
+                btn.disabled = true;
+                btn.textContent = '登录中…';
+                fetch('/api/login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username, password: password })
+                }).then(function (res) {
+                    return res.json().catch(function () { return {}; }).then(function (data) {
+                        return { status: res.status, data: data };
+                    });
+                }).then(function (r) {
+                    if (r.status === 200 && r.data.ok) {
+                        btn.textContent = '登录成功，正在进入…';
+                        location.replace(safeNext());
+                        return;
+                    }
+                    if (r.status === 429) {
+                        var sec = 60;
+                        var m = /(\d+)\s*秒/.exec(r.data.error || '');
+                        if (m) sec = parseInt(m[1], 10);
+                        startLock(sec);
+                        return;
+                    }
+                    show(r.data.error || '登录失败，请稍后重试。', 'error');
+                    btn.disabled = false;
+                    btn.textContent = '登 录';
+                    pwd.select();
+                }).catch(function () {
+                    show('无法连接服务器，请检查服务是否正常运行。', 'error');
+                    btn.disabled = false;
+                    btn.textContent = '登 录';
+                });
+            });
+        })();
+    </script>
+</body>
+</html>
