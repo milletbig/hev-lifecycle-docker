@@ -55,9 +55,16 @@
                 const categories = ref([]);
                 const records = ref([]);
                 const renameSnapshot = ref(null);
+
+                // 本地日期字符串（YYYY-MM-DD），避免 toISOString 的时区偏移
+                const todayStr = () => {
+                    const d = new Date();
+                    const pad = n => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                };
                 
                 const form = reactive({
-                    id: '', date: '', recordType: 'expense', categoryId: '', categoryName: '', subCategory: '', subCategoryList: [],
+                    id: '', date: todayStr(), recordType: 'expense', categoryId: '', categoryName: '', subCategory: '', subCategoryList: [],
                     amount: 0, hev: 0, ev: 0, liters: 0, kwh: null, kwhSource: 'pile', totalMileage: 0, remark: '',
                     // 充电 SOC：均为选填，终止 SOC 默认 100
                     startSoc: null, endSoc: 100

@@ -60,6 +60,8 @@
         .reminder-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
         .text-danger { color: #F56C6C; font-weight: bold; }
         .stats-summary { font-size: 14px; font-weight: bold; background: #f4f4f5; padding: 8px 15px; border-radius: 4px; }
+        /* 隐藏原生文件输入，仅由“恢复数据”按钮触发，避免出现重复的“选择文件”控件 */
+        .file-input-hidden { display: none !important; }
 
         /* ================= 移动端响应式适配（320px - 767px） ================= */
         html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -260,10 +262,6 @@
                                 </el-form-item>
                             </template>
 
-                            <el-form-item label="备注">
-                                <el-input v-model="form.remark" maxlength="100" clearable placeholder="选填，通用备注信息"></el-input>
-                            </el-form-item>
-
                             <el-form-item :label="form.recordType === 'income' ? '收入金额(元)' : '支出金额(元)'">
                                 <el-input-number v-model="form.amount" :min="0" :precision="2" :step="10" style="width: 100%;"></el-input-number>
                             </el-form-item>
@@ -281,6 +279,10 @@
                                     <el-input-number v-model="form.totalMileage" :min="0" :step="10" style="width: 100%;" placeholder="可自动计算或手动输入"></el-input-number>
                                 </el-form-item>
                             </template>
+
+                            <el-form-item label="备注">
+                                <el-input v-model="form.remark" maxlength="100" clearable placeholder="选填，通用备注信息"></el-input>
+                            </el-form-item>
 
                             <el-form-item>
                                 <el-button type="primary" @click="saveRecord">保存记录</el-button>
@@ -618,14 +620,14 @@
                 <el-divider></el-divider>
 
                 <!-- 数据管理 -->
-                <h3>数据备份与恢复 (纯本地零依赖)</h3>
-                <el-alert title="所有数据均保存在您的浏览器本地缓存中。建议定期导出备份，以免清理浏览器缓存导致数据丢失。" type="warning" show-icon style="margin-bottom: 20px;"></el-alert>
+                <h3>数据备份与恢复（Docker 本地部署）</h3>
+                <el-alert title="数据由服务端持久化到容器挂载的 data/state.json，记录变更后自动备份（仅保留最新 30 份）。下方导出/导入用于生成可迁移的 JSON 副本，建议定期导出留存。" type="warning" show-icon style="margin-bottom: 20px;"></el-alert>
                 
                 <el-button type="success" size="large" @click="exportData">备份数据 (导出 JSON)</el-button>
                 <el-divider direction="vertical"></el-divider>
                 <el-button type="primary" size="large" @click="exportCSV">导出表格 (CSV)</el-button>
                 <el-divider direction="vertical"></el-divider>
-                <input type="file" id="fileInput" accept=".json" style="display: none" @change="importData">
+                <input type="file" id="fileInput" class="file-input-hidden" accept=".json" @change="importData">
                 <el-button type="warning" size="large" @click="triggerFileInput">恢复数据 (导入 JSON)</el-button>
             </el-tab-pane>
         </el-tabs>
