@@ -336,10 +336,20 @@
                 };
 
                 const OPERATION_LOG_KEY = 'hev_op_logs';
+                // 日志保留上限：与设置页提示文案共用同一常量，避免描述与实际存储逻辑脱节
+                const LOG_LIMIT = 1000;
 
                 const loadOpLogs = () => {
-                    try { opLogs.value = JSON.parse(localStorage.getItem(OPERATION_LOG_KEY)) || []; }
-                    catch (e) { opLogs.value = []; }
+                    let list = [];
+                    try {
+                        const parsed = JSON.parse(localStorage.getItem(OPERATION_LOG_KEY));
+                        if (Array.isArray(parsed)) list = parsed;
+                    } catch (e) { list = []; }
+                    opLogs.value = list.slice(0, LOG_LIMIT);
+                    // 历史或导入数据可能超过上限：加载时裁剪并回写，保证存储内容同样不超过上限
+                    if (list.length > LOG_LIMIT) {
+                        try { localStorage.setItem(OPERATION_LOG_KEY, JSON.stringify(opLogs.value)); } catch (e) {}
+                    }
                 };
 
                 const appendOperationLog = (entry) => {
@@ -349,7 +359,7 @@
                         operator: 'local',
                         ...entry
                     };
-                    opLogs.value = [log, ...opLogs.value].slice(0, 1000);
+                    opLogs.value = [log, ...opLogs.value].slice(0, LOG_LIMIT);
                     localStorage.setItem(OPERATION_LOG_KEY, JSON.stringify(opLogs.value));
                 };
 
@@ -714,10 +724,22 @@
                 const draggingId = ref('');
                 const draggingDate = ref('');
                 const dragOverId = ref('');
+                const dragOverPos = ref(''); // 'before' | 'after'
+
+                const resetDragState = () => {
+                    draggingId.value = '';
+                    draggingDate.value = '';
+                    dragOverId.value = '';
+                    dragOverPos.value = '';
+                };
 
                 const recordRowClassName = ({ row }) => {
                     if (row.id === draggingId.value) return 'drag-row-dragging';
-                    if (row.id === dragOverId.value) return 'drag-row-over';
+                    if (row.id === dragOverId.value) {
+                        return dragOverPos.value === 'after'
+                            ? 'drag-row-over drag-row-over-after'
+                            : 'drag-row-over drag-row-over-before';
+                    }
                     return '';
                 };
 
@@ -727,92 +749,124 @@
                         ElementPlus.ElMessage.warning('当前为只读角色，无法调整顺序');
                         return;
                     }
-                    if (hasMileageInfo(row)) {
-                        event.preventDefault();
-                        ElementPlus.ElMessage.warning('含里程的记录不支持手动排序');
-                        return;
-                    }
                     draggingId.value = row.id;
                     draggingDate.value = row.date || '';
                     dragOverId.value = '';
+                    dragOverPos.value = '';
                     if (event.dataTransfer) {
                         event.dataTransfer.effectAllowed = 'move';
                         try { event.dataTransfer.setData('text/plain', String(row.id)); } catch (e) {}
                     }
                 };
 
-                const onDragEnd = () => {
-                    draggingId.value = '';
-                    draggingDate.value = '';
-                    dragOverId.value = '';
-                };
+                const onDragEnd = () => resetDragState();
 
-                // 表格已按日期分组渲染，需要先定位事件所属分组，再按行号映射到对应记录
-                const getGroupRecordsFromEvent = (target) => {
+                // 分组表格按日期渲染：先定位事件所属分组，再按行号映射到记录，
+                // 同时根据鼠标位于行内上半/下半，决定插入到目标记录之前还是之后
+                const getRowDropInfoFromEvent = (event) => {
+                    const target = event.target;
                     if (!(target instanceof Element)) return null;
                     const groupEl = target.closest('[data-records-group]');
                     if (!groupEl) return null;
-                    const idx = Number(groupEl.getAttribute('data-records-group'));
-                    const group = groupedRecords.value[idx];
-                    return group ? group.records : null;
-                };
-
-                const getRowRecordFromEvent = (target, list) => {
-                    if (!(target instanceof Element) || !Array.isArray(list)) return null;
+                    const group = groupedRecords.value[Number(groupEl.getAttribute('data-records-group'))];
+                    if (!group) return null;
                     const tr = target.closest('tr.el-table__row');
                     if (!tr || !tr.parentElement) return null;
                     const idx = Array.prototype.indexOf.call(tr.parentElement.children, tr);
-                    return list[idx] || null;
+                    const row = group.records[idx];
+                    if (!row) return null;
+                    const rect = tr.getBoundingClientRect();
+                    return { row, after: event.clientY > rect.top + rect.height / 2 };
                 };
 
-                // 仅允许在同一日期分组内、对无里程记录拖拽排序
+                // 同一日期分组内可自由拖拽（含里程记录），跨日期分组不可放置
                 const canDropOnRow = (row) => {
                     if (!row || row.id === draggingId.value) return false;
-                    if (hasMileageInfo(row)) return false;
                     return (row.date || '') === draggingDate.value;
                 };
 
                 const handleTableDragOver = (event) => {
                     if (!draggingId.value) return;
-                    const list = getGroupRecordsFromEvent(event.target);
-                    const row = getRowRecordFromEvent(event.target, list);
-                    if (!canDropOnRow(row)) return;
+                    const info = getRowDropInfoFromEvent(event);
+                    if (!info) return;
+                    if (!canDropOnRow(info.row)) {
+                        // 拖到其他日期分组时清除高亮，避免残留指示
+                        if (dragOverId.value) {
+                            dragOverId.value = '';
+                            dragOverPos.value = '';
+                        }
+                        return;
+                    }
                     event.preventDefault();
                     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-                    if (dragOverId.value !== row.id) dragOverId.value = row.id;
+                    const pos = info.after ? 'after' : 'before';
+                    // 仅在目标行或插入位置变化时更新响应式状态，避免拖动过程中的无效重渲染
+                    if (dragOverId.value === info.row.id && dragOverPos.value === pos) return;
+                    dragOverId.value = info.row.id;
+                    dragOverPos.value = pos;
                 };
 
                 const handleTableDragLeave = (event) => {
                     const wrap = recordsTableWrap.value;
                     if (wrap && event.relatedTarget && wrap.contains(event.relatedTarget)) return;
                     dragOverId.value = '';
+                    dragOverPos.value = '';
                 };
 
                 const handleTableDrop = (event) => {
                     if (!draggingId.value) return;
-                    const list = getGroupRecordsFromEvent(event.target);
-                    const row = getRowRecordFromEvent(event.target, list);
-                    if (!canDropOnRow(row)) return;
+                    // 拖拽进行中一律阻止浏览器默认行为（如按文本打开搜索结果）
                     event.preventDefault();
-                    moveRecord(draggingId.value, row.id);
-                    draggingId.value = '';
-                    draggingDate.value = '';
-                    dragOverId.value = '';
+                    const info = getRowDropInfoFromEvent(event);
+                    if (!info || !canDropOnRow(info.row)) {
+                        resetDragState();
+                        return;
+                    }
+                    const fromId = draggingId.value;
+                    const toId = info.row.id;
+                    const position = info.after ? 'after' : 'before';
+                    resetDragState();
+                    moveRecord(fromId, toId, position);
                 };
 
-                // 将记录移动到目标记录所在位置，并立即持久化，保证刷新后顺序一致
-                const moveRecord = (fromId, toId) => {
+                // 里程倒序是展示层的临时排序：拖拽前先把当前展示顺序固化为该日期组的手动顺序，
+                // 再切回“添加时间”，保证拖拽结果与用户所见一致
+                const freezeDateGroupDisplayOrder = (date) => {
+                    const slots = [];
+                    records.value.forEach((r, i) => { if ((r.date || '') === date) slots.push(i); });
+                    if (!slots.length) return;
+                    const displayed = sortedTableRecords.value.filter(r => (r.date || '') === date);
+                    const shownIds = new Set(displayed.map(r => r.id));
+                    const hidden = slots.map(i => records.value[i]).filter(r => !shownIds.has(r.id));
+                    const ordered = displayed.concat(hidden);
+                    const next = records.value.slice();
+                    ordered.forEach((r, idx) => { next[slots[idx]] = r; });
+                    records.value = next;
+                };
+
+                // 将记录插入到目标记录之前/之后，并立即持久化，保证刷新后顺序一致
+                const moveRecord = (fromId, toId, position) => {
                     if (!requireEdit()) return;
                     if (fromId === toId) return;
+                    const fromRec = records.value.find(r => r.id === fromId);
+                    const toRec = records.value.find(r => r.id === toId);
+                    if (!fromRec || !toRec) return;
+                    const switchedFromMileage = recordSortMode.value === 'mileage';
+                    if (switchedFromMileage) {
+                        freezeDateGroupDisplayOrder(fromRec.date || '');
+                        recordSortMode.value = 'time';
+                    }
                     const list = records.value.slice();
                     const from = list.findIndex(r => r.id === fromId);
-                    const to = list.findIndex(r => r.id === toId);
-                    if (from < 0 || to < 0) return;
+                    if (from < 0) return;
                     const [moved] = list.splice(from, 1);
-                    list.splice(to, 0, moved);
+                    // 移除源记录后目标索引可能前移，需重新定位
+                    const target = list.findIndex(r => r.id === toId);
+                    if (target < 0) return;
+                    list.splice(position === 'after' ? target + 1 : target, 0, moved);
                     records.value = list;
                     saveData();
-                    ElementPlus.ElMessage.success('顺序已更新');
+                    ElementPlus.ElMessage.success(switchedFromMileage ? '顺序已更新，已切换为添加时间排序' : '顺序已更新');
                 };
 
                 // ==================== 单条记录编辑 ====================
@@ -1841,7 +1895,7 @@
                     handleEditSocInput, validateEditSoc,
                     saveCategories, addCategory, editCategory, deleteCategory, addSubItem, removeSubItem,
                     renameSubItem, renameSnapshot, undoLastRename, saveSettings,
-                    canEdit, canManage, currentRole, opLogs, loadOpLogs, logActionLabel, formatLogTime,
+                    canEdit, canManage, currentRole, opLogs, logLimit: LOG_LIMIT, loadOpLogs, logActionLabel, formatLogTime,
                     tagOpsVisible, tagOps, subCategories, tagOpsTags, tagOpsTargets, tagOpsAffected,
                     openTagOpsDialog, onTagOpsCategoryChange, runTagOps, onTagClick,
                     sortDialogVisible, sortDraft, openCategorySort, moveCategory, saveCategoryOrder, resetCategoryOrder,
