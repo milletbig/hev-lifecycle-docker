@@ -38,9 +38,10 @@
         .drag-handle { cursor: grab; user-select: none; color: #909399; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 3px; }
         .drag-handle:hover { color: #409EFF; background: #ecf5ff; }
         .drag-handle:active { cursor: grabbing; }
-        .drag-handle.drag-handle-disabled { cursor: default; color: #c0c4cc; background: transparent; }
         .el-table__row.drag-row-dragging td { opacity: .45; }
         .el-table__row.drag-row-over td { background: #ecf5ff !important; }
+        .el-table__row.drag-row-over-before td { box-shadow: inset 0 2px 0 #409EFF; }
+        .el-table__row.drag-row-over-after td { box-shadow: inset 0 -2px 0 #409EFF; }
         /* 事件记录按日期分组 */
         .record-date-group { margin-bottom: 18px; }
         .record-date-group:last-child { margin-bottom: 0; }
@@ -390,13 +391,12 @@
                         <span class="record-date-title">{{ group.date }}</span>
                         <span class="record-date-meta">{{ group.records.length }} 条 · 支出 {{ group.expense.toFixed(2) }} 元 · 收入 {{ group.income.toFixed(2) }} 元</span>
                     </div>
-                    <el-table :data="group.records" style="width: 100%" border stripe :row-class-name="recordRowClassName">
+                    <el-table :data="group.records" style="width: 100%" border stripe row-key="id" :row-class-name="recordRowClassName">
                         <el-table-column label="排序" width="56" align="center">
                             <template #default="scope">
                                 <span class="drag-handle"
-                                    :class="{ 'drag-handle-disabled': hasMileageInfo(scope.row) }"
-                                    :title="hasMileageInfo(scope.row) ? '含里程记录不支持手动排序' : '拖拽调整顺序'"
-                                    :draggable="canEdit && !hasMileageInfo(scope.row)"
+                                    title="拖拽调整顺序"
+                                    :draggable="canEdit"
                                     @dragstart="onDragStart($event, scope.row)"
                                     @dragend="onDragEnd">≡</span>
                             </template>
@@ -599,7 +599,7 @@
                 </el-table>
                 <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
                     <el-button size="small" @click="loadOpLogs">刷新日志</el-button>
-                    <span style="font-size: 12px; color: #909399;">日志仅保存在本地，最多保留 1000 条。</span>
+                    <span style="font-size: 12px; color: #909399;">日志保存在浏览器本地并同步至服务端 data/state.json，最多保留最近 {{ logLimit }} 条。</span>
                 </div>
 
                 <el-divider></el-divider>
