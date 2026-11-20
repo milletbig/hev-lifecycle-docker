@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>混动车全生命周期记录</title>
+    <!-- 站点图标：SVG 优先，ICO 兼容旧版浏览器，PNG 供 iOS 主屏使用 -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0F766E" />
     <!-- Element Plus CSS -->
     <link rel="stylesheet" href="/vendor/element-plus.css" />
     <style>
@@ -71,6 +76,20 @@
         .settings-autosave { font-size: 12px; color: #67c23a; }
         .backup-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 12px; margin-bottom: 16px; border: 1px solid #ebeef5; border-radius: 6px; background: #fafafa; font-size: 12.5px; color: #606266; }
         .backup-status b { color: #303133; font-weight: 600; }
+        .help-dot { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: 8px; border-radius: 50%; background: #909399; color: #fff; font-size: 11px; line-height: 1; cursor: help; user-select: none; }
+        /* 类别管理窄屏卡片视图：桌面端隐藏，≤767px 时替代表格（S10） */
+        .category-cards { display: none; }
+        .category-card { border: 1px solid #ebeef5; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+        .category-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+        .category-card-name { font-size: 14px; font-weight: 600; color: #303133; }
+        .category-card-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 13px; color: #606266; }
+        .category-card-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
+        .category-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .category-card-actions .el-button { margin-left: 0; }
+        @media (max-width: 767px) {
+            .category-table-wrap { display: none; }
+            .category-cards { display: block; }
+        }
         @media (max-width: 480px) { .settings-version { font-size: 12px; } }
 
         /* ================= 移动端响应式适配（320px - 767px） ================= */
@@ -486,7 +505,15 @@
                 <h3>车辆管理</h3>
                 <el-button type="primary" @click="addVehicle" style="margin-bottom: 20px;">新增车辆</el-button>
                 <el-table :data="vehicles" style="width: 100%; max-width: 600px;" border>
-                    <el-table-column prop="name" label="车辆名称" width="200"></el-table-column>
+                    <el-table-column label="车辆名称" width="240">
+                        <template #default="scope">
+                            {{ scope.row.name }}
+                            <el-tag v-if="scope.row.id === currentVehicleId" type="success" size="small" effect="plain" style="margin-left: 6px;">当前车辆</el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="记录数" width="100" align="center">
+                        <template #default="scope">{{ vehicleRecordCount(scope.row.id) }}</template>
+                    </el-table-column>
                     <el-table-column label="操作" width="160">
                         <template #default="scope">
                             <el-button size="small" @click="editVehicle(scope.$index)">编辑</el-button>
@@ -522,10 +549,13 @@
                     </el-form-item>
                     <el-form-item label="CS折算系数 η">
                         <el-input-number v-model="appSettings.csDuty" :min="0.3" :max="0.8" :step="0.05" :precision="2" @change="saveSettings"></el-input-number>
+                        <el-tooltip placement="top" effect="dark" content="η 为发动机运转里程占比（0.3~0.8）。馈电油耗(CS折算) = 燃油行驶段油耗 × η，用于把燃油里程段油耗折算为 CS 工况参考值。">
+                            <span class="help-dot" tabindex="0" aria-label="CS 折算系数说明">?</span>
+                        </el-tooltip>
                     </el-form-item>
                     <el-form-item label="自动备份周期(天)">
                         <el-input-number v-model="appSettings.backupIntervalDays" :min="1" :max="365" :step="1" @change="saveSettings"></el-input-number>
-                        <span style="margin-left: 10px; color: #909399; font-size: 12px;">默认 7 天；每次记录保存后也会立即备份，仅保留最新 30 份</span>
+                        <span style="margin-left: 10px; color: #909399; font-size: 12px;">默认 7 天；每次记录保存后也会立即备份，服务端默认保留最新 {{ backupInfo.keep }} 份</span>
                     </el-form-item>
                 </el-form>
 
@@ -533,11 +563,12 @@
 
                 <h3>类别管理</h3>
                 <div style="margin-bottom: 20px;">
-                    <el-button type="danger" @click="addCategory('expense')">新增支出类别</el-button>
+                    <el-button type="primary" @click="addCategory('expense')">新增支出类别</el-button>
                     <el-button type="success" @click="addCategory('income')">新增收入类别</el-button>
                     <el-button :disabled="!canManage" @click="openCategorySort">手动排序</el-button>
                 </div>
                 
+                <div class="category-table-wrap">
                 <el-table :data="categories" style="width: 100%" border>
                     <el-table-column label="收/支" width="80">
                         <template #default="scope">
@@ -577,13 +608,16 @@
                                     style="margin-right: 8px; margin-bottom: 5px; cursor: pointer;">
                                     {{ tag.name }}{{ tag.active === false ? '（已停用）' : '' }}
                                 </el-tag>
-                                <el-input
-                                    v-model="scope.row.newSubInput"
-                                    placeholder="输入后回车"
-                                    size="small"
-                                    style="width: 120px;"
-                                    @keyup.enter="addSubItem(scope.row)"
-                                ></el-input>
+                                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                                    <el-input
+                                        v-model="scope.row.newSubInput"
+                                        placeholder="输入标签名称"
+                                        size="small"
+                                        style="width: 120px;"
+                                        @keyup.enter="addSubItem(scope.row)"
+                                    ></el-input>
+                                    <el-button size="small" type="primary" plain @click="addSubItem(scope.row)">添加</el-button>
+                                </div>
                             </template>
                             <span v-else>不可用</span>
                         </template>
@@ -596,6 +630,63 @@
                         </template>
                     </el-table-column>
                 </el-table>
+                </div>
+
+                <!-- 窄屏卡片视图（S10）：≤767px 时替代表格，避免固定列宽横向滚动 -->
+                <div class="category-cards">
+                    <div v-for="(cat, idx) in categories" :key="cat.id" class="category-card">
+                        <div class="category-card-head">
+                            <span class="category-card-name">
+                                {{ cat.name }}
+                                <el-tag v-if="cat.active === false" type="info" size="small" effect="plain">已停用</el-tag>
+                            </span>
+                            <el-tag :type="cat.type === 'income' ? 'success' : 'danger'" size="small">
+                                {{ cat.type === 'income' ? '收入' : '支出' }}
+                            </el-tag>
+                        </div>
+                        <div class="category-card-row">
+                            <span>是否记录里程</span>
+                            <el-switch v-model="cat.requireMileage" size="small" @change="saveCategories" title="仅影响新增记录，历史数据不变"></el-switch>
+                        </div>
+                        <div class="category-card-row">
+                            <span>启用二级菜单</span>
+                            <el-switch v-model="cat.hasSub" size="small" @change="saveCategories" title="仅影响新增记录与表单展示，历史数据不变"></el-switch>
+                        </div>
+                        <div style="padding: 4px 0; font-size: 13px; color: #606266;">二级标签</div>
+                        <template v-if="cat.hasSub">
+                            <div class="category-card-tags">
+                                <el-tag
+                                    v-for="tag in cat.subItems"
+                                    :key="tag.id"
+                                    :type="tag.active === false ? 'info' : undefined"
+                                    :effect="tag.active === false ? 'plain' : 'light'"
+                                    closable
+                                    @close="removeSubItem(cat, tag.id)"
+                                    @click="onTagClick(cat, tag)"
+                                    :title="tag.active === false ? '已停用，点击启用' : '点击重命名'"
+                                    style="cursor: pointer;">
+                                    {{ tag.name }}{{ tag.active === false ? '（已停用）' : '' }}
+                                </el-tag>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <el-input
+                                    v-model="cat.newSubInput"
+                                    placeholder="输入标签名称"
+                                    size="small"
+                                    style="flex: 1;"
+                                    @keyup.enter="addSubItem(cat)"
+                                ></el-input>
+                                <el-button size="small" type="primary" plain @click="addSubItem(cat)">添加</el-button>
+                            </div>
+                        </template>
+                        <span v-else style="font-size: 12px; color: #909399;">不可用</span>
+                        <div class="category-card-actions">
+                            <el-button size="small" @click="editCategory(idx)">编辑</el-button>
+                            <el-button v-if="cat.active === false" size="small" type="success" @click="enableCategory(idx)">启用</el-button>
+                            <el-button size="small" type="danger" @click="deleteCategory(idx)">删除</el-button>
+                        </div>
+                    </div>
+                </div>
                 <div style="display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap;">
                     <span style="font-size: 12px; color: #909399;">点击标签重命名或启用；× 仅移除标签选项，不影响历史记录展示。</span>
                     <span style="font-size: 12px; color: #909399;">「是否记录里程」「启用二级菜单」开关仅影响新增记录与表单展示，不修改历史数据。</span>
@@ -603,8 +694,19 @@
                     <el-button v-if="renameSnapshot && canManage" size="small" @click="undoLastRename">撤销上次标签操作（{{ renameSnapshot.oldName }} → {{ renameSnapshot.newName }}）</el-button>
                 </div>
 
-                <h4 style="margin: 18px 0 8px; font-size: 14px;">操作日志（最近 20 条）</h4>
-                <el-table :data="opLogs.slice(0, 20)" size="small" border style="width: 100%;" empty-text="暂无操作日志">
+                <h4 style="margin: 18px 0 8px; font-size: 14px;">操作日志（筛选后 {{ filteredOpLogs.length }} 条 / 共 {{ opLogs.length }} 条）</h4>
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                    <el-select v-model="logFilter.action" size="small" clearable placeholder="全部操作类型" style="width: 140px;" @change="resetLogPage">
+                        <el-option v-for="opt in logActionOptions" :key="opt.value" :label="opt.label" :value="opt.value"></el-option>
+                    </el-select>
+                    <el-select v-model="logFilter.categoryName" size="small" clearable placeholder="全部类别" style="width: 140px;" @change="resetLogPage">
+                        <el-option v-for="name in logCategoryOptions" :key="name" :label="name" :value="name"></el-option>
+                    </el-select>
+                    <el-button size="small" @click="loadOpLogs">刷新日志</el-button>
+                    <el-button size="small" type="primary" plain :disabled="!filteredOpLogs.length" @click="exportOpLogs">导出日志</el-button>
+                    <el-button size="small" link type="primary" :disabled="!logFilter.action && !logFilter.categoryName" @click="clearLogFilter">清除筛选</el-button>
+                </div>
+                <el-table :data="paginatedOpLogs" size="small" border style="width: 100%;" empty-text="暂无操作日志">
                     <el-table-column label="时间" width="170">
                         <template #default="scope">{{ formatLogTime(scope.row.ts) }}</template>
                     </el-table-column>
@@ -620,8 +722,16 @@
                     <el-table-column prop="affectedRecords" label="影响条数" width="90"></el-table-column>
                     <el-table-column prop="result" label="结果" width="80"></el-table-column>
                 </el-table>
-                <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
-                    <el-button size="small" @click="loadOpLogs">刷新日志</el-button>
+                <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <el-pagination
+                        v-if="filteredOpLogs.length > logPageSize"
+                        background
+                        small
+                        layout="prev, pager, next"
+                        :total="filteredOpLogs.length"
+                        :page-size="logPageSize"
+                        v-model:current-page="logPage">
+                    </el-pagination>
                     <span style="font-size: 12px; color: #909399;">日志保存在浏览器本地并同步至服务端 data/state.json，最多保留最近 {{ logLimit }} 条。</span>
                 </div>
 
@@ -644,7 +754,7 @@
 
                 <!-- 数据管理 -->
                 <h3>数据备份与恢复（Docker 本地部署）</h3>
-                <el-alert title="数据由服务端持久化到容器挂载的 data/state.json，记录变更后自动备份（仅保留最新 30 份）。下方导出/导入用于生成可迁移的 JSON 副本，建议定期导出留存。" type="warning" show-icon style="margin-bottom: 20px;"></el-alert>
+                <el-alert title="数据由服务端持久化到容器挂载的 data/state.json，记录变更后自动备份（默认保留最新 30 份，可由服务端 BACKUP_KEEP 调整）。下方导出/导入用于生成可迁移的 JSON 副本，建议定期导出留存。" type="warning" show-icon style="margin-bottom: 20px;"></el-alert>
 
                 <div class="backup-status">
                     <span>本地最近保存：<b>{{ lastSavedText }}</b></span>

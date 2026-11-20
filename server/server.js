@@ -611,6 +611,17 @@ async function handle(req, res) {
         return sendJson(res, 200, { authenticated: true, username: session.u, expiresAt: session.exp });
     }
 
+    // 站点图标：浏览器在登录页也会发起匿名请求，需在鉴权前放行
+    if (method === 'GET' || method === 'HEAD') {
+        const ICON_FILES = {
+            '/favicon.ico': 'favicon.ico',
+            '/favicon.svg': 'favicon.svg',
+            '/apple-touch-icon.png': 'apple-touch-icon.png'
+        };
+        const iconFile = ICON_FILES[pathname];
+        if (iconFile) return serveFile(req, res, path.join(PUBLIC_DIR, iconFile), 'public, max-age=86400');
+    }
+
     // ---------- 以下所有资源都必须通过鉴权 ----------
     const session = currentSession(req);
     if (!session) {

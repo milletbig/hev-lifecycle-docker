@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.1.2';
+        const APP_VERSION = '1.1.3';
 
         const app = createApp({
             setup() {
@@ -22,6 +22,10 @@
                 });
 
                 const opLogs = ref([]);
+                // 操作日志筛选与分页（S9）：仅影响展示，不改变日志存储与保留上限
+                const logFilter = reactive({ action: '', categoryName: '' });
+                const logPage = ref(1);
+                const logPageSize = 10;
                 const sortDialogVisible = ref(false);
                 const sortDraft = ref([]);
                 const currentRole = computed(() => appSettings.role || 'admin');
@@ -181,6 +185,9 @@
                     const v = vehicles.value.find(c => c.id === currentVehicleId.value);
                     return v ? v.name : '';
                 });
+
+                // 车辆记录数（S11）：用于设置页车辆管理表格展示
+                const vehicleRecordCount = (vehicleId) => records.value.filter(r => r.vehicleId === vehicleId).length;
 
                 // 停用类别（active=false）保留历史记录，但不再出现在新增与筛选下拉中
                 const activeCategories = computed(() => categories.value.filter(c => c.active !== false));
@@ -355,6 +362,7 @@
                         if (Array.isArray(parsed)) list = parsed;
                     } catch (e) { list = []; }
                     opLogs.value = list.slice(0, LOG_LIMIT);
+                    logPage.value = 1;
                     // 历史或导入数据可能超过上限：加载时裁剪并回写，保证存储内容同样不超过上限
                     if (list.length > LOG_LIMIT) {
                         try { localStorage.setItem(OPERATION_LOG_KEY, JSON.stringify(opLogs.value)); } catch (e) {}
@@ -386,6 +394,57 @@
                 }[action] || action);
 
                 const formatLogTime = (ts) => ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '-';
+
+                // =============== 操作日志筛选、分页与导出（S9） ===============
+                const logActionOptions = computed(() => {
+                    const actions = Array.from(new Set(opLogs.value.map(l => l.action).filter(Boolean)));
+                    return actions.map(a => ({ value: a, label: logActionLabel(a) }));
+                });
+                const logCategoryOptions = computed(() =>
+                    Array.from(new Set(opLogs.value.map(l => l.categoryName).filter(Boolean)))
+                );
+                const filteredOpLogs = computed(() => opLogs.value.filter(l =>
+                    (!logFilter.action || l.action === logFilter.action) &&
+                    (!logFilter.categoryName || l.categoryName === logFilter.categoryName)
+                ));
+                const paginatedOpLogs = computed(() => {
+                    const start = (logPage.value - 1) * logPageSize;
+                    return filteredOpLogs.value.slice(start, start + logPageSize);
+                });
+                const resetLogPage = () => { logPage.value = 1; };
+                const clearLogFilter = () => {
+                    logFilter.action = '';
+                    logFilter.categoryName = '';
+                    logPage.value = 1;
+                };
+
+                const exportOpLogs = () => {
+                    if (!filteredOpLogs.value.length) {
+                        ElementPlus.ElMessage.warning('当前筛选条件下没有可导出的日志');
+                        return;
+                    }
+                    const esc = (v) => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
+                    let csv = '\uFEFF时间,操作类型,类别,变更前,变更后,影响条数,结果\n';
+                    filteredOpLogs.value.forEach(l => {
+                        csv += [
+                            esc(formatLogTime(l.ts)),
+                            esc(logActionLabel(l.action)),
+                            esc(l.categoryName || ''),
+                            esc(l.oldName || ''),
+                            esc(l.newName || ''),
+                            esc(l.affectedRecords === undefined || l.affectedRecords === null ? '' : l.affectedRecords),
+                            esc(l.result === 'success' ? '成功' : (l.result || ''))
+                        ].join(',') + '\n';
+                    });
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `操作日志_${new Date().toISOString().slice(0, 10)}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    ElementPlus.ElMessage.success(`已导出 ${filteredOpLogs.value.length} 条操作日志`);
+                };
 
                 // 文案迁移：历史“高速费”统一为“过路费”
                 const migrateLegacyLabels = () => {
@@ -610,14 +669,18 @@
                     const v = vehicles.value[index];
                     ElementPlus.ElMessageBox.confirm(`确定删除车辆 "${v.name}" 吗？该车辆下的所有记录将被清空！`, '警告', { type: 'warning' })
                         .then(() => {
+                            const wasCurrent = currentVehicleId.value === v.id;
                             records.value = records.value.filter(r => r.vehicleId !== v.id); 
                             vehicles.value.splice(index, 1); 
-                            if (currentVehicleId.value === v.id) {
+                            if (wasCurrent) {
                                 currentVehicleId.value = vehicles.value[0].id;
                                 handleVehicleChange();
                             }
                             saveData();
-                            ElementPlus.ElMessage.success('已删除车辆');
+                            // 删除当前车辆后明确告知已切换到哪一辆（S11）
+                            ElementPlus.ElMessage.success(wasCurrent
+                                ? `已删除车辆「${v.name}」，已切换到「${currentVehicleName.value}」`
+                                : `已删除车辆「${v.name}」`);
                         }).catch(() => {});
                 };
 
@@ -2129,7 +2192,7 @@
                 return {
                     appVersion: APP_VERSION,
                     activeTab, chartPeriod, selectedChartCategory, appSettings, isCompact, 
-                    vehicles, currentVehicleId, currentVehicleName, handleVehicleChange, addVehicle, editVehicle, deleteVehicle,
+                    vehicles, currentVehicleId, currentVehicleName, handleVehicleChange, addVehicle, editVehicle, deleteVehicle, vehicleRecordCount,
                     categories, records, activeRecords, form, currentCategory, groupedRecords, hasMileageInfo,
                     filteredCategories, activeCategories, currentPage, pageSize, requiresMileage, showSubCatPie, formatSoc,
                     tableFilter, filteredTableRecords, tableStats, maintenanceInfo, insuranceInfo, inspectionInfo,
@@ -2146,6 +2209,8 @@
                     renameSubItem, renameSnapshot, undoLastRename, saveSettings, handleRoleChange,
                     lastSavedText, lastSyncText, backupInfo, backupCountText, refreshBackupInfo,
                     canEdit, canManage, currentRole, opLogs, logLimit: LOG_LIMIT, loadOpLogs, logActionLabel, formatLogTime,
+                    logFilter, logPage, logPageSize, logActionOptions, logCategoryOptions, filteredOpLogs, paginatedOpLogs,
+                    resetLogPage, clearLogFilter, exportOpLogs,
                     tagOpsVisible, tagOps, subCategories, tagOpsTags, tagOpsTargets, tagOpsAffected,
                     openTagOpsDialog, onTagOpsCategoryChange, runTagOps, onTagClick,
                     sortDialogVisible, sortDraft, openCategorySort, moveCategory, saveCategoryOrder, resetCategoryOrder,
