@@ -64,6 +64,12 @@
         /* 隐藏原生文件输入，仅由“恢复数据”按钮触发，避免出现重复的“选择文件”控件 */
         .file-input-hidden { display: none !important; }
 
+        /* 设置页顶部标题与版本号 */
+        .settings-topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
+        .settings-topbar h3 { margin: 8px 0; }
+        .settings-version { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid #dcdfe6; border-radius: 12px; background: #f5f7fa; color: #606266; font-size: 12.5px; line-height: 20px; white-space: nowrap; }
+        @media (max-width: 480px) { .settings-version { font-size: 12px; } }
+
         /* ================= 移动端响应式适配（320px - 767px） ================= */
         html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
         html, body { max-width: 100%; overflow-x: hidden; }
@@ -469,7 +475,11 @@
 
             <!-- ================= 设置：多车管理、类别、单位与日志 ================= -->
             <el-tab-pane label="设置" name="settings">
-                
+                <div class="settings-topbar">
+                    <h3>设置</h3>
+                    <span class="settings-version" title="当前运行版本，可与镜像标签核对">当前版本 v{{ appVersion }}</span>
+                </div>
+
                 <h3>车辆管理</h3>
                 <el-button type="primary" @click="addVehicle" style="margin-bottom: 20px;">新增车辆</el-button>
                 <el-table :data="vehicles" style="width: 100%; max-width: 600px;" border>

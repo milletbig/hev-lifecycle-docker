@@ -1,5 +1,8 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
+        // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
+        const APP_VERSION = '1.1.0';
+
         const app = createApp({
             setup() {
                 // =============== 数据状态 ===============
@@ -1894,6 +1897,7 @@
                 });
 
                 return {
+                    appVersion: APP_VERSION,
                     activeTab, chartPeriod, selectedChartCategory, appSettings, isCompact, 
                     vehicles, currentVehicleId, currentVehicleName, handleVehicleChange, addVehicle, editVehicle, deleteVehicle,
                     categories, records, activeRecords, form, currentCategory, groupedRecords, hasMileageInfo,
