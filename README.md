@@ -82,7 +82,7 @@ bash scripts/restore.sh <备份文件路径>   # 恢复指定备份
 | 项目 | 值 |
 | --- | --- |
 | 镜像地址 | `ghcr.io/milletbig/hev-lifecycle-docker` |
-| 标签 | `1.0.5`、`1.0`、`latest`、`sha-<commit>` |
+| 标签 | `1.0.6`、`1.0`、`latest`、`sha-<commit>` |
 | 架构 | `linux/amd64`、`linux/arm64` |
 
 升级到新版本时，修改 `docker-compose.yml` 中的镜像标签后执行：

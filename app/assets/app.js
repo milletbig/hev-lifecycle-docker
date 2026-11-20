@@ -652,6 +652,19 @@
                 const handleEditSocInput = (key, val) => applySocInput(editForm, key, val);
                 const validateEditSoc = (key) => validateSocOn(editForm, key);
 
+                // 新增记录金额/升数默认显示 0.00：聚焦时若仍为默认值则全选，直接键入即可替换
+                const selectDefaultNumberOnFocus = (event) => {
+                    const input = event && event.target;
+                    if (!input || input.tagName !== 'INPUT') return;
+                    if (Number(input.value) !== 0) return;
+                    // 延后到点击定位光标之后执行，避免选区被鼠标事件覆盖
+                    setTimeout(() => {
+                        if (document.activeElement === input) {
+                            try { input.select(); } catch (e) { /* 忽略选区异常 */ }
+                        }
+                    }, 0);
+                };
+
                 // 持久化前统一转为整数或 null，保证旧记录与字符串输入都不会写入脏数据
                 const toSocInt = (val) => {
                     if (val === null || val === undefined || String(val).trim() === '') return null;
@@ -1888,7 +1901,7 @@
                     tableFilter, filteredTableRecords, tableStats, maintenanceInfo, insuranceInfo, inspectionInfo,
                     recordSortMode, handleRecordSortModeChange,
                     handleRecordTypeChange, handleCategoryChange, saveRecord, deleteRecord,
-                    handleSocInput, validateSoc,
+                    handleSocInput, validateSoc, selectDefaultNumberOnFocus,
                     recordsTableWrap, recordRowClassName, onDragStart, onDragEnd,
                     editVisible, editSaving, editForm, editCategories, editTargetCategory, editActiveSubItems,
                     openEditRecord, saveEditRecord, handleEditRecordTypeChange, handleEditCategoryChange,
