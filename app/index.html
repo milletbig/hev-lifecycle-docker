@@ -379,7 +379,7 @@
                     </el-form-item>
                     <el-form-item label="一级分类">
                         <el-select v-model="tableFilter.categoryId" clearable placeholder="全部分类" style="width: 120px;">
-                            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id"></el-option>
+                            <el-option v-for="cat in activeCategories" :key="cat.id" :label="cat.name" :value="cat.id"></el-option>
                         </el-select>
                     </el-form-item>
                     <el-form-item label="排序方式">
@@ -540,7 +540,12 @@
                             </el-tag>
                         </template>
                     </el-table-column>
-                    <el-table-column prop="name" label="一级类别" width="100"></el-table-column>
+                    <el-table-column label="一级类别" width="130">
+                        <template #default="scope">
+                            {{ scope.row.name }}
+                            <el-tag v-if="scope.row.active === false" type="info" size="small" effect="plain" style="margin-left: 4px;">已停用</el-tag>
+                        </template>
+                    </el-table-column>
                     <el-table-column label="是否记录里程" width="110" align="center">
                         <template #default="scope">
                             <el-switch v-model="scope.row.requireMileage" @change="saveCategories"></el-switch>
@@ -577,9 +582,10 @@
                             <span v-else>不可用</span>
                         </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="160">
+                    <el-table-column label="操作" width="200">
                         <template #default="scope">
                             <el-button size="small" @click="editCategory(scope.$index)">编辑</el-button>
+                            <el-button v-if="scope.row.active === false" size="small" type="success" @click="enableCategory(scope.$index)">启用</el-button>
                             <el-button size="small" type="danger" @click="deleteCategory(scope.$index)">删除</el-button>
                         </template>
                     </el-table-column>
@@ -599,7 +605,7 @@
                         <template #default="scope">{{ logActionLabel(scope.row.action) }}</template>
                     </el-table-column>
                     <el-table-column prop="categoryName" label="类别" width="100"></el-table-column>
-                    <el-table-column label="标签变更" min-width="180">
+                    <el-table-column label="变更内容" min-width="180">
                         <template #default="scope">
                             {{ scope.row.oldName || '-' }}<span v-if="scope.row.newName"> → {{ scope.row.newName }}</span>
                         </template>
@@ -641,6 +647,32 @@
                 <el-button type="warning" size="large" @click="triggerFileInput">恢复数据 (导入 JSON)</el-button>
             </el-tab-pane>
         </el-tabs>
+
+        <el-dialog v-model="deleteCategoryDialogVisible" title="删除类别" width="min(520px, 92vw)" :close-on-click-modal="false">
+            <div style="font-size: 13px; line-height: 1.8; color: #606266;">
+                <p style="margin: 0 0 10px;">
+                    即将删除类别「<b>{{ pendingDeleteCategory ? pendingDeleteCategory.name : '' }}</b>」，关联历史记录 <b>{{ deleteCategoryAffected }}</b> 条。
+                </p>
+                <el-radio-group v-model="deleteCategoryMode">
+                    <el-radio value="migrate">迁移到其他类别</el-radio>
+                    <el-radio value="deactivate">仅停用（保留历史记录）</el-radio>
+                </el-radio-group>
+                <el-form v-if="deleteCategoryMode === 'migrate'" label-width="90px" size="small" style="margin-top: 14px;">
+                    <el-form-item label="目标类别">
+                        <el-select v-model="deleteCategoryTargetId" placeholder="请选择同收/支类型的目标类别" style="width: 100%;">
+                            <el-option v-for="c in deleteCategoryTargets" :key="c.id" :label="c.name" :value="c.id"></el-option>
+                        </el-select>
+                    </el-form-item>
+                </el-form>
+                <p style="font-size: 12px; color: #909399; margin: 8px 0 0;">
+                    迁移会同步更新关联记录的类别，原二级项目文字保留；停用后该类别不再出现在新增与筛选下拉中，历史记录与图表保持不变，可随时重新启用。
+                </p>
+            </div>
+            <template #footer>
+                <el-button @click="deleteCategoryDialogVisible = false">取消</el-button>
+                <el-button type="danger" :disabled="deleteCategoryMode === 'migrate' && !deleteCategoryTargetId" @click="confirmDeleteCategory">确认删除</el-button>
+            </template>
+        </el-dialog>
 
         <el-dialog v-model="tagOpsVisible" title="标签合并 / 停用" width="min(540px, 92vw)" :close-on-click-modal="false">
             <el-form label-width="100px" size="small">

@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.1.0';
+        const APP_VERSION = '1.1.1';
 
         const app = createApp({
             setup() {
@@ -27,7 +27,7 @@
                 const currentRole = computed(() => appSettings.role || 'admin');
                 const canEdit = computed(() => currentRole.value !== 'viewer');
                 const canManage = computed(() => currentRole.value === 'admin');
-                const subCategories = computed(() => categories.value.filter(c => c.hasSub));
+                const subCategories = computed(() => categories.value.filter(c => c.hasSub && c.active !== false));
 
                 const vehicles = ref([]);
                 const currentVehicleId = ref('');
@@ -83,7 +83,10 @@
                     startSoc: null, endSoc: null
                 });
                 const editCategories = computed(() =>
-                    categories.value.filter(c => c.type === (editForm.recordType === 'income' ? 'income' : 'expense'))
+                    categories.value.filter(c =>
+                        c.type === (editForm.recordType === 'income' ? 'income' : 'expense') &&
+                        (c.active !== false || c.id === editForm.categoryId)
+                    )
                 );
                 const editTargetCategory = computed(() => categories.value.find(c => c.id === editForm.categoryId));
                 const editActiveSubItems = computed(() =>
@@ -179,8 +182,11 @@
                     return v ? v.name : '';
                 });
 
+                // 停用类别（active=false）保留历史记录，但不再出现在新增与筛选下拉中
+                const activeCategories = computed(() => categories.value.filter(c => c.active !== false));
+
                 const filteredCategories = computed(() => {
-                    return categories.value.filter(c => c.type === form.recordType);
+                    return activeCategories.value.filter(c => c.type === form.recordType);
                 });
 
                 const EXPENSE_CATEGORY_ORDER = ['充电', '加油', '过路费', '停车', '洗车', '违章', '保养', '维修', '保险', '年检', '购车/车贷'];
@@ -371,7 +377,12 @@
                     'merge-subtag': '合并',
                     'deactivate-subtag': '停用',
                     'reactivate-subtag': '启用',
-                    'undo-rename': '撤销'
+                    'delete-subtag': '删除',
+                    'undo-rename': '撤销',
+                    'delete-category': '删除类别',
+                    'migrate-category': '迁移类别',
+                    'deactivate-category': '停用类别',
+                    'reactivate-category': '启用类别'
                 }[action] || action);
 
                 const formatLogTime = (ts) => ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '-';
@@ -1051,7 +1062,106 @@
                     }).catch(() => {});
                 };
 
-                const deleteCategory = (index) => { if (!requireManage()) return; categories.value.splice(index, 1); saveCategories(); };
+                // =============== 类别删除：二次确认、迁移或停用（S1） ===============
+                const deleteCategoryDialogVisible = ref(false);
+                const deleteCategoryIndex = ref(-1);
+                const deleteCategoryMode = ref('migrate');
+                const deleteCategoryTargetId = ref('');
+
+                // 兼容旧数据：缺少 categoryId 的记录以类别名称匹配
+                const recordBelongsToCategory = (r, cat) => r.categoryId ? r.categoryId === cat.id : r.categoryName === cat.name;
+
+                const pendingDeleteCategory = computed(() => categories.value[deleteCategoryIndex.value] || null);
+                const deleteCategoryAffected = computed(() => {
+                    const cat = pendingDeleteCategory.value;
+                    if (!cat) return 0;
+                    return records.value.filter(r => recordBelongsToCategory(r, cat)).length;
+                });
+                const deleteCategoryTargets = computed(() => {
+                    const cat = pendingDeleteCategory.value;
+                    if (!cat) return [];
+                    return activeCategories.value.filter(c => c.id !== cat.id && c.type === cat.type);
+                });
+
+                const deleteCategory = (index) => {
+                    if (!requireManage()) return;
+                    const cat = categories.value[index];
+                    if (!cat) return;
+                    if (records.value.some(r => recordBelongsToCategory(r, cat))) {
+                        deleteCategoryIndex.value = index;
+                        deleteCategoryMode.value = 'migrate';
+                        deleteCategoryTargetId.value = '';
+                        deleteCategoryDialogVisible.value = true;
+                        return;
+                    }
+                    ElementPlus.ElMessageBox.confirm(`确定删除类别「${cat.name}」吗？该类别暂无关联记录。`, '删除类别', {
+                        type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消'
+                    }).then(() => {
+                        categories.value.splice(index, 1);
+                        if (tableFilter.categoryId === cat.id) tableFilter.categoryId = '';
+                        saveCategories();
+                        appendOperationLog({
+                            action: 'delete-category', categoryId: cat.id, categoryName: cat.name,
+                            oldName: cat.name, newName: '', affectedRecords: 0, result: 'success'
+                        });
+                        ElementPlus.ElMessage.success('类别已删除');
+                    }).catch(() => {});
+                };
+
+                const confirmDeleteCategory = () => {
+                    if (!requireManage()) return;
+                    const cat = pendingDeleteCategory.value;
+                    const index = deleteCategoryIndex.value;
+                    if (!cat) { deleteCategoryDialogVisible.value = false; return; }
+                    const affected = deleteCategoryAffected.value;
+                    if (deleteCategoryMode.value === 'deactivate') {
+                        cat.active = false;
+                        deleteCategoryDialogVisible.value = false;
+                        if (tableFilter.categoryId === cat.id) tableFilter.categoryId = '';
+                        saveCategories();
+                        appendOperationLog({
+                            action: 'deactivate-category', categoryId: cat.id, categoryName: cat.name,
+                            oldName: cat.name, newName: '', affectedRecords: affected, result: 'success'
+                        });
+                        ElementPlus.ElMessage.success('类别已停用，历史记录与图表保持不变');
+                        return;
+                    }
+                    const target = categories.value.find(c => c.id === deleteCategoryTargetId.value && c.id !== cat.id);
+                    if (!target) { ElementPlus.ElMessage.warning('请选择迁移的目标类别'); return; }
+                    records.value.forEach(r => {
+                        if (!recordBelongsToCategory(r, cat)) return;
+                        r.categoryId = target.id;
+                        r.categoryName = target.name;
+                        if (Array.isArray(r.subCategoryIds)) {
+                            const targetIds = new Set((target.subItems || []).map(s => s.id));
+                            r.subCategoryIds = r.subCategoryIds.filter(id => targetIds.has(id));
+                        }
+                    });
+                    categories.value.splice(index, 1);
+                    deleteCategoryDialogVisible.value = false;
+                    if (tableFilter.categoryId === cat.id) tableFilter.categoryId = '';
+                    saveCategories();
+                    if (selectedChartCategory.value === cat.name) selectedChartCategory.value = target.name;
+                    updateCharts();
+                    appendOperationLog({
+                        action: 'migrate-category', categoryId: cat.id, categoryName: cat.name,
+                        oldName: cat.name, newName: target.name, affectedRecords: affected, result: 'success'
+                    });
+                    ElementPlus.ElMessage.success(`已删除类别「${cat.name}」，${affected} 条记录迁移到「${target.name}」`);
+                };
+
+                const enableCategory = (index) => {
+                    if (!requireManage()) return;
+                    const cat = categories.value[index];
+                    if (!cat || cat.active !== false) return;
+                    cat.active = true;
+                    saveCategories();
+                    appendOperationLog({
+                        action: 'reactivate-category', categoryId: cat.id, categoryName: cat.name,
+                        oldName: cat.name, newName: '', affectedRecords: 0, result: 'success'
+                    });
+                    ElementPlus.ElMessage.success('类别已启用');
+                };
 
                 const addSubItem = (row) => {
                     if (!requireManage()) return;
@@ -1064,28 +1174,52 @@
                     row.newSubInput = '';
                     saveCategories();
                 };
+                // 标签操作快照：重命名/合并/删除前统一保存，供“撤销上次标签操作”恢复
+                const saveTagSnapshot = (cat, tag, oldName, newName, affected, action) => {
+                    const snapshot = {
+                        ts: Date.now(),
+                        action: action || 'tag-rename',
+                        categoryId: cat.id,
+                        categoryName: cat.name,
+                        tagId: tag.id,
+                        oldName,
+                        newName,
+                        affectedRecords: affected,
+                        categories: JSON.parse(JSON.stringify(categories.value)),
+                        records: JSON.parse(JSON.stringify(records.value))
+                    };
+                    localStorage.setItem('hev_snapshot_latest', JSON.stringify(snapshot));
+                    renameSnapshot.value = snapshot;
+                    return snapshot;
+                };
+
                 const removeSubItem = (row, tagId) => {
                     if (!requireManage()) return;
-                    row.subItems = row.subItems.filter(s => s.id !== tagId);
-                    saveCategories();
+                    const tag = (row.subItems || []).find(s => s.id === tagId);
+                    if (!tag) return;
+                    const affected = records.value.filter(r =>
+                        r.categoryId === row.id && String(r.subCategory || '').split('、').includes(tag.name)
+                    ).length;
+                    const tip = affected > 0
+                        ? `删除标签「${tag.name}」？当前有 ${affected} 条历史记录使用该标签，记录内容保持不变；删除后可通过“撤销上次标签操作”恢复。`
+                        : `删除标签「${tag.name}」？删除后可通过“撤销上次标签操作”恢复。`;
+                    ElementPlus.ElMessageBox.confirm(tip, '删除二级标签', {
+                        type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消'
+                    }).then(() => {
+                        saveTagSnapshot(row, tag, tag.name, '（已删除）', affected, 'tag-delete');
+                        row.subItems = row.subItems.filter(s => s.id !== tagId);
+                        saveCategories();
+                        appendOperationLog({
+                            action: 'delete-subtag', categoryId: row.id, categoryName: row.name,
+                            tagId: tag.id, oldName: tag.name, newName: '', affectedRecords: affected, result: 'success'
+                        });
+                        ElementPlus.ElMessage.success('标签已删除，可在操作日志区撤销');
+                    }).catch(() => {});
                 };
 
                 const applySubItemRename = (cat, tag, oldName, newName, affected) => {
                     try {
-                        const snapshot = {
-                            ts: Date.now(),
-                            action: 'tag-rename',
-                            categoryId: cat.id,
-                            categoryName: cat.name,
-                            tagId: tag.id,
-                            oldName,
-                            newName,
-                            affectedRecords: affected,
-                            categories: JSON.parse(JSON.stringify(categories.value)),
-                            records: JSON.parse(JSON.stringify(records.value))
-                        };
-                        localStorage.setItem('hev_snapshot_latest', JSON.stringify(snapshot));
-                        renameSnapshot.value = snapshot;
+                        saveTagSnapshot(cat, tag, oldName, newName, affected, 'tag-rename');
 
                         tag.name = newName;
                         tag.aliases = Array.from(new Set([...(tag.aliases || []), oldName]));
@@ -1833,30 +1967,53 @@
                     if (!file) return;
                     const reader = new FileReader();
                     reader.onload = (e) => {
+                        let data;
                         try {
-                            const data = JSON.parse(e.target.result);
-                            if (data.categories && data.records) {
-                                if (data.vehicles) vehicles.value = data.vehicles;
-                                else vehicles.value = defaultVehicles;
-                                
+                            data = JSON.parse(e.target.result);
+                        } catch (err) {
+                            ElementPlus.ElMessage.error('导入失败：不是有效的备份文件');
+                            return;
+                        }
+                        if (!data || !Array.isArray(data.categories) || !Array.isArray(data.records)) {
+                            ElementPlus.ElMessage.error('导入失败：不是有效的备份文件');
+                            return;
+                        }
+                        const incomingVehicles = Array.isArray(data.vehicles) ? data.vehicles.length : 0;
+                        const summary = [
+                            `当前数据：车辆 ${vehicles.value.length} 辆、类别 ${categories.value.length} 个、记录 ${records.value.length} 条`,
+                            `待导入：车辆 ${incomingVehicles} 辆、类别 ${data.categories.length} 个、记录 ${data.records.length} 条`
+                        ].join('<br>');
+                        const message = `<div style="line-height:1.8;">导入会覆盖当前全部数据且无法自动回滚。<br>${summary}<br>确认后将先自动导出当前数据备份，再执行导入。</div>`;
+                        ElementPlus.ElMessageBox.confirm(message, '确认恢复数据', {
+                            type: 'warning',
+                            confirmButtonText: '覆盖并导入',
+                            cancelButtonText: '取消',
+                            dangerouslyUseHTMLString: true
+                        }).then(() => {
+                            try {
+                                // 导入前自动导出一份当前数据，降低误操作风险
+                                exportData();
+                                // 先完成数据转换再整体替换，避免转换异常导致数据被部分覆盖
+                                const nextVehicles = incomingVehicles > 0
+                                    ? data.vehicles
+                                    : JSON.parse(JSON.stringify(defaultVehicles));
+                                const nextRecords = normalizeRecords(data.records);
+                                vehicles.value = nextVehicles;
                                 categories.value = data.categories;
-                                records.value = normalizeRecords(data.records);
+                                records.value = nextRecords;
                                 if (data.settings) Object.assign(appSettings, data.settings);
-                                
                                 currentVehicleId.value = vehicles.value[0].id;
                                 normalizeSubItems();
                                 migrateLegacyLabels();
                                 sortCategories();
                                 saveData();
                                 saveSettings();
-                                ElementPlus.ElMessage.success('数据恢复成功！');
+                                ElementPlus.ElMessage.success('数据恢复成功，导入前的数据已自动导出备份');
                                 updateCharts();
-                            } else {
-                                throw new Error('数据格式不匹配');
+                            } catch (err) {
+                                ElementPlus.ElMessage.error('导入失败：' + (err && err.message ? err.message : '数据格式不匹配'));
                             }
-                        } catch (err) {
-                            ElementPlus.ElMessage.error('导入失败：不是有效的备份文件');
-                        }
+                        }).catch(() => {});
                     };
                     reader.readAsText(file);
                     event.target.value = ''; 
@@ -1901,7 +2058,7 @@
                     activeTab, chartPeriod, selectedChartCategory, appSettings, isCompact, 
                     vehicles, currentVehicleId, currentVehicleName, handleVehicleChange, addVehicle, editVehicle, deleteVehicle,
                     categories, records, activeRecords, form, currentCategory, groupedRecords, hasMileageInfo,
-                    filteredCategories, currentPage, pageSize, requiresMileage, showSubCatPie, formatSoc,
+                    filteredCategories, activeCategories, currentPage, pageSize, requiresMileage, showSubCatPie, formatSoc,
                     tableFilter, filteredTableRecords, tableStats, maintenanceInfo, insuranceInfo, inspectionInfo,
                     recordSortMode, handleRecordSortModeChange,
                     handleRecordTypeChange, handleCategoryChange, saveRecord, deleteRecord,
@@ -1911,6 +2068,8 @@
                     openEditRecord, saveEditRecord, handleEditRecordTypeChange, handleEditCategoryChange,
                     handleEditSocInput, validateEditSoc,
                     saveCategories, addCategory, editCategory, deleteCategory, addSubItem, removeSubItem,
+                    enableCategory, deleteCategoryDialogVisible, pendingDeleteCategory, deleteCategoryAffected,
+                    deleteCategoryMode, deleteCategoryTargetId, deleteCategoryTargets, confirmDeleteCategory,
                     renameSubItem, renameSnapshot, undoLastRename, saveSettings,
                     canEdit, canManage, currentRole, opLogs, logLimit: LOG_LIMIT, loadOpLogs, logActionLabel, formatLogTime,
                     tagOpsVisible, tagOps, subCategories, tagOpsTags, tagOpsTargets, tagOpsAffected,
