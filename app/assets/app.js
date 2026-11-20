@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.1.1';
+        const APP_VERSION = '1.1.2';
 
         const app = createApp({
             setup() {
@@ -505,15 +505,45 @@
                     }
                 };
 
+                // 最近一次本地保存时间，用于设置页“已自动保存”与备份区状态展示
+                const lastSavedAt = ref(Number(localStorage.getItem('hev_last_saved_at')) || null);
+                const markSaved = () => {
+                    const now = Date.now();
+                    lastSavedAt.value = now;
+                    try { localStorage.setItem('hev_last_saved_at', String(now)); } catch (e) { /* 忽略存储异常 */ }
+                };
+
                 const saveData = () => {
                     localStorage.setItem('hev_vehicles', JSON.stringify(vehicles.value));
                     localStorage.setItem('hev_categories', JSON.stringify(categories.value));
                     localStorage.setItem('hev_records', JSON.stringify(records.value));
+                    markSaved();
                 };
 
                 const saveSettings = () => {
                     localStorage.setItem('hev_app_settings', JSON.stringify(appSettings));
+                    markSaved();
                     updateCharts();
+                };
+
+                // 切换为只读前二次确认，取消时回退到原角色（S8）
+                const roleBeforeChange = ref(appSettings.role || 'admin');
+                const handleRoleChange = (val) => {
+                    if (val === 'viewer' && roleBeforeChange.value !== 'viewer') {
+                        ElementPlus.ElMessageBox.confirm(
+                            '切换为“只读”后将不能新增、编辑或删除记录，仍可随时切回。确认切换？',
+                            '切换为只读',
+                            { type: 'warning', confirmButtonText: '确认切换', cancelButtonText: '取消' }
+                        ).then(() => {
+                            roleBeforeChange.value = 'viewer';
+                            saveSettings();
+                        }).catch(() => {
+                            appSettings.role = roleBeforeChange.value;
+                        });
+                        return;
+                    }
+                    roleBeforeChange.value = val;
+                    saveSettings();
                 };
 
                 const openCategorySort = () => {
@@ -1035,7 +1065,12 @@
                     ElementPlus.ElMessageBox.prompt(`请输入${titleName}名称`, titleName, { confirmButtonText: '确定', cancelButtonText: '取消' })
                         .then(({ value }) => {
                             if (value && value.trim() !== '') {
-                                categories.value.push({ id: Date.now().toString(), name: value.trim(), type: type, hasSub: false, subItems: [], newSubInput: '', requireMileage: false });
+                                const name = value.trim();
+                                if (categories.value.some(c => c.type === type && c.name === name)) {
+                                    ElementPlus.ElMessage.warning(`同类型下已存在名为「${name}」的类别`);
+                                    return;
+                                }
+                                categories.value.push({ id: Date.now().toString(), name: name, type: type, hasSub: false, subItems: [], newSubInput: '', requireMileage: false });
                                 sortCategories();
                                 saveCategories();
                             }
@@ -1051,6 +1086,10 @@
                     }).then(({ value }) => {
                         if (value && value.trim() !== '' && value.trim() !== oldName) {
                             const newName = value.trim();
+                            if (categories.value.some(c => c.id !== cat.id && c.type === cat.type && c.name === newName)) {
+                                ElementPlus.ElMessage.warning(`同类型下已存在名为「${newName}」的类别，请更换名称`);
+                                return;
+                            }
                             cat.name = newName;
                             records.value.forEach(r => { if (r.categoryId === cat.id) r.categoryName = newName; });
                             if (selectedChartCategory.value === oldName) selectedChartCategory.value = newName;
@@ -1918,7 +1957,7 @@
                     }
                 };
 
-                const exportData = () => {
+                const exportData = (silent) => {
                     const data = { vehicles: vehicles.value, categories: categories.value, records: records.value, settings: appSettings };
                     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
@@ -1927,6 +1966,7 @@
                     a.download = `混动车全生命周期记录备份_${new Date().toISOString().slice(0,10)}.json`;
                     a.click();
                     URL.revokeObjectURL(url);
+                    if (silent !== true) ElementPlus.ElMessage.success('备份文件已导出');
                 };
 
                 const exportCSV = () => {
@@ -1957,7 +1997,39 @@
                     a.download = `混动车全生命周期数据导出_${new Date().toISOString().slice(0,10)}.csv`;
                     a.click();
                     URL.revokeObjectURL(url);
+                    ElementPlus.ElMessage.success('CSV 表格已导出');
                 };
+
+                // 数据备份状态：本地保存时间取最近一次写入，服务端备份份数由 /api/status 提供
+                const backupInfo = ref({ available: false, count: 0, latestAt: null, keep: 30 });
+                const lastSyncAt = ref(window.__hevLastSavedAt || null);
+                const lastSavedText = computed(() => lastSavedAt.value ? formatLogTime(lastSavedAt.value) : '暂无记录');
+                const lastSyncText = computed(() => lastSyncAt.value ? formatLogTime(lastSyncAt.value) : '等待服务端同步');
+                const backupCountText = computed(() => {
+                    if (!backupInfo.value.available) return '未连接服务端';
+                    const latest = backupInfo.value.latestAt ? formatLogTime(backupInfo.value.latestAt) : '暂无';
+                    return `${backupInfo.value.count} 份（上限 ${backupInfo.value.keep} 份），最近 ${latest}`;
+                });
+
+                const refreshBackupInfo = async () => {
+                    lastSyncAt.value = window.__hevLastSavedAt || lastSyncAt.value;
+                    try {
+                        const res = await fetch('/api/status', { credentials: 'same-origin' });
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        const data = await res.json();
+                        const backup = data && data.backup ? data.backup : {};
+                        backupInfo.value = {
+                            available: true,
+                            count: Number(backup.count) || 0,
+                            latestAt: backup.latestAt || null,
+                            keep: Number(backup.keep) || 30
+                        };
+                    } catch (e) {
+                        backupInfo.value = Object.assign({}, backupInfo.value, { available: false });
+                    }
+                };
+
+                watch(activeTab, (tab) => { if (tab === 'settings') refreshBackupInfo(); });
 
                 const triggerFileInput = () => { document.getElementById('fileInput').click(); };
 
@@ -1992,7 +2064,7 @@
                         }).then(() => {
                             try {
                                 // 导入前自动导出一份当前数据，降低误操作风险
-                                exportData();
+                                exportData(true);
                                 // 先完成数据转换再整体替换，避免转换异常导致数据被部分覆盖
                                 const nextVehicles = incomingVehicles > 0
                                     ? data.vehicles
@@ -2008,6 +2080,7 @@
                                 sortCategories();
                                 saveData();
                                 saveSettings();
+                                roleBeforeChange.value = appSettings.role || 'admin';
                                 ElementPlus.ElMessage.success('数据恢复成功，导入前的数据已自动导出备份');
                                 updateCharts();
                             } catch (err) {
@@ -2070,7 +2143,8 @@
                     saveCategories, addCategory, editCategory, deleteCategory, addSubItem, removeSubItem,
                     enableCategory, deleteCategoryDialogVisible, pendingDeleteCategory, deleteCategoryAffected,
                     deleteCategoryMode, deleteCategoryTargetId, deleteCategoryTargets, confirmDeleteCategory,
-                    renameSubItem, renameSnapshot, undoLastRename, saveSettings,
+                    renameSubItem, renameSnapshot, undoLastRename, saveSettings, handleRoleChange,
+                    lastSavedText, lastSyncText, backupInfo, backupCountText, refreshBackupInfo,
                     canEdit, canManage, currentRole, opLogs, logLimit: LOG_LIMIT, loadOpLogs, logActionLabel, formatLogTime,
                     tagOpsVisible, tagOps, subCategories, tagOpsTags, tagOpsTargets, tagOpsAffected,
                     openTagOpsDialog, onTagOpsCategoryChange, runTagOps, onTagClick,

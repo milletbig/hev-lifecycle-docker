@@ -68,6 +68,9 @@
         .settings-topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
         .settings-topbar h3 { margin: 8px 0; }
         .settings-version { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid #dcdfe6; border-radius: 12px; background: #f5f7fa; color: #606266; font-size: 12.5px; line-height: 20px; white-space: nowrap; }
+        .settings-autosave { font-size: 12px; color: #67c23a; }
+        .backup-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 12px; margin-bottom: 16px; border: 1px solid #ebeef5; border-radius: 6px; background: #fafafa; font-size: 12.5px; color: #606266; }
+        .backup-status b { color: #303133; font-weight: 600; }
         @media (max-width: 480px) { .settings-version { font-size: 12px; } }
 
         /* ================= 移动端响应式适配（320px - 767px） ================= */
@@ -494,7 +497,10 @@
 
                 <el-divider></el-divider>
                 
-                <h3>图表与业务参数设置</h3>
+                <div class="settings-topbar">
+                    <h3>图表与业务参数设置</h3>
+                    <span class="settings-autosave">已自动保存 · {{ lastSavedText }}</span>
+                </div>
                 <el-form label-width="150px" size="default" style="margin-bottom: 30px; max-width: 600px;">
                     <el-form-item label="能耗/费用单位">
                         <el-radio-group v-model="appSettings.costUnit" @change="saveSettings">
@@ -548,12 +554,12 @@
                     </el-table-column>
                     <el-table-column label="是否记录里程" width="110" align="center">
                         <template #default="scope">
-                            <el-switch v-model="scope.row.requireMileage" @change="saveCategories"></el-switch>
+                            <el-switch v-model="scope.row.requireMileage" @change="saveCategories" title="仅影响新增记录，历史数据不变"></el-switch>
                         </template>
                     </el-table-column>
                     <el-table-column label="启用二级菜单" width="110" align="center">
                         <template #default="scope">
-                            <el-switch v-model="scope.row.hasSub" @change="saveCategories"></el-switch>
+                            <el-switch v-model="scope.row.hasSub" @change="saveCategories" title="仅影响新增记录与表单展示，历史数据不变"></el-switch>
                         </template>
                     </el-table-column>
                     <el-table-column label="二级标签(回车添加, 点击标签重命名, ×删除)">
@@ -592,6 +598,7 @@
                 </el-table>
                 <div style="display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap;">
                     <span style="font-size: 12px; color: #909399;">点击标签重命名或启用；× 仅移除标签选项，不影响历史记录展示。</span>
+                    <span style="font-size: 12px; color: #909399;">「是否记录里程」「启用二级菜单」开关仅影响新增记录与表单展示，不修改历史数据。</span>
                     <el-button size="small" :disabled="!canManage" @click="openTagOpsDialog">合并 / 停用</el-button>
                     <el-button v-if="renameSnapshot && canManage" size="small" @click="undoLastRename">撤销上次标签操作（{{ renameSnapshot.oldName }} → {{ renameSnapshot.newName }}）</el-button>
                 </div>
@@ -622,7 +629,7 @@
                 <h4 style="margin: 0 0 10px; font-size: 14px;">权限与角色</h4>
                 <el-form label-width="100px" size="small" style="max-width: 460px;">
                     <el-form-item label="当前角色">
-                        <el-select v-model="appSettings.role" style="width: 100%;" @change="saveSettings">
+                        <el-select v-model="appSettings.role" style="width: 100%;" @change="handleRoleChange">
                             <el-option label="管理员（全部权限）" value="admin"></el-option>
                             <el-option label="编辑者（记账，不可维护标签）" value="editor"></el-option>
                             <el-option label="只读（仅查看）" value="viewer"></el-option>
@@ -638,6 +645,13 @@
                 <!-- 数据管理 -->
                 <h3>数据备份与恢复（Docker 本地部署）</h3>
                 <el-alert title="数据由服务端持久化到容器挂载的 data/state.json，记录变更后自动备份（仅保留最新 30 份）。下方导出/导入用于生成可迁移的 JSON 副本，建议定期导出留存。" type="warning" show-icon style="margin-bottom: 20px;"></el-alert>
+
+                <div class="backup-status">
+                    <span>本地最近保存：<b>{{ lastSavedText }}</b></span>
+                    <span>服务端备份：<b>{{ backupCountText }}</b></span>
+                    <span>服务端最近同步：<b>{{ lastSyncText }}</b></span>
+                    <el-button link type="primary" size="small" @click="refreshBackupInfo">刷新状态</el-button>
+                </div>
                 
                 <el-button type="success" size="large" @click="exportData">备份数据 (导出 JSON)</el-button>
                 <el-divider direction="vertical"></el-divider>

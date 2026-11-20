@@ -623,6 +623,24 @@ async function handle(req, res) {
         return res.end('Unauthorized');
     }
 
+    if (pathname === '/api/status' && method === 'GET') {
+        let count = 0;
+        let latestAt = null;
+        try {
+            const files = (await fsp.readdir(BACKUP_DIR)).filter(function (f) { return f.endsWith('.json'); }).sort();
+            count = files.length;
+            if (files.length) {
+                const st = await fsp.stat(path.join(BACKUP_DIR, files[files.length - 1]));
+                latestAt = st.mtime.toISOString();
+            }
+        } catch (e) { /* 备份目录尚未创建时按 0 份处理 */ }
+        return sendJson(res, 200, {
+            rev: state.rev,
+            updatedAt: state.updatedAt,
+            backup: { count: count, latestAt: latestAt, keep: BACKUP_KEEP }
+        });
+    }
+
     if (pathname === '/api/state') {
         if (method === 'GET') {
             return sendJson(res, 200, { rev: state.rev, updatedAt: state.updatedAt, data: state.data });
