@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.1.3';
+        const APP_VERSION = '1.2.0';
 
         const app = createApp({
             setup() {
@@ -15,7 +15,8 @@
                     fuelUnit: 'L/百公里',
                     maintKm: 10000,
                     maintMonths: 12,
-                    csDuty: 0.50,
+                    csMode: 'auto',
+                    csDuty: 0.18,
                     role: 'admin',
                     categoryOrderCustom: false,
                     backupIntervalDays: 7
@@ -543,11 +544,27 @@
                         const parsedSet = JSON.parse(savedSettings);
                         if (parsedSet.maintKm === undefined) parsedSet.maintKm = 10000;
                         if (parsedSet.maintMonths === undefined) parsedSet.maintMonths = 12;
-                        if (parsedSet.csDuty === undefined) parsedSet.csDuty = 0.50;
+                        // CS 参数一次性迁移：旧版无 csMode 时进入自动模式，旧默认 0.50 改为 0.18
+                        const legacyCsSettings = parsedSet.csMode === undefined;
+                        if (legacyCsSettings) {
+                            parsedSet.csMode = 'auto';
+                            if (parsedSet.csDuty === undefined || Number(parsedSet.csDuty) === 0.50) {
+                                parsedSet.csDuty = 0.18;
+                            }
+                        }
+                        parsedSet.csMode = parsedSet.csMode === 'manual' ? 'manual' : 'auto';
+                        if (parsedSet.csDuty === undefined) parsedSet.csDuty = 0.18;
+                        const savedCsDuty = Number(parsedSet.csDuty);
+                        parsedSet.csDuty = Number.isFinite(savedCsDuty)
+                            ? Math.min(0.60, Math.max(0.05, savedCsDuty))
+                            : 0.18;
                         if (parsedSet.role === undefined) parsedSet.role = 'admin';
                         if (parsedSet.categoryOrderCustom === undefined) parsedSet.categoryOrderCustom = false;
                         if (parsedSet.backupIntervalDays === undefined) parsedSet.backupIntervalDays = 7;
                         Object.assign(appSettings, parsedSet);
+                        if (legacyCsSettings) {
+                            localStorage.setItem('hev_app_settings', JSON.stringify(appSettings));
+                        }
                     }
 
                     sortCategories();
@@ -1560,6 +1577,8 @@
                 // =============== 图表逻辑 ===============
                 let gasChart, evChart, costChart, totalEnergyChart, mileageChart;
                 let chartCategoryPie, chartCategoryTrend, chartEvRatio, chartSubCategoryPie; 
+                // 当前图表时间窗内的实际 CS 里程占比（百分比），供设置页与油耗图表副标题展示
+                const gasActualEta = ref(null);
 
                 const initCharts = () => {
                     if (document.getElementById('chartGas')) {
@@ -1675,7 +1694,9 @@
                     // 时间窗只把窗前的周期挡在图表外，它们仍参与累计与差分
                     const windowKey = windowStart ? getPeriodKey(fmtDate(windowStart)) : null;
 
-                    let gasDates = [], gasValues = [], gasTotalValues = [], csValues = [];
+                    let gasDates = [], gasValues = [], gasTotalValues = [], gasForecastValues = [], gasMeta = [];
+                    let gasAnomalyCount = 0;
+                    let gasWindowHev = 0, gasWindowEv = 0, gasWindowTotal = 0;
                     let evDates = [], evValues = [];
                     let costDates = [], costValues = [];
                     let energyDates = [], energyValues = [];
@@ -1684,7 +1705,13 @@
                     let ratioDates = [], ratioValues = [];
 
                     const fuelMultiplier = appSettings.fuelUnit === 'L/百公里' ? 100 : 1;
+                    const fuelDigits = appSettings.fuelUnit === 'L/百公里' ? 2 : 4;
                     const costMultiplier = appSettings.costUnit === '元/百公里' ? 100 : 1;
+                    const csMode = appSettings.csMode === 'manual' ? 'manual' : 'auto';
+                    const csDutyRaw = Number(appSettings.csDuty);
+                    const csDuty = Number.isFinite(csDutyRaw)
+                        ? Math.min(0.60, Math.max(0.05, csDutyRaw))
+                        : 0.18;
 
                     // 统一按周期（月 / 季度 / 半年 / 年）聚合展示走势图
                     {
@@ -1697,6 +1724,7 @@
                             if (!periodData[p]) {
                                 periodData[p] = { 
                                     liters: 0, chargeAmt: 0, totalCost: 0, energyCost: 0,
+                                    fuelCount: 0, negativeLiters: false, fuelAmountOnly: false,
                                     maxHev: -1, maxEv: -1, maxTotal: -1,
                                     minHev: -1, minEv: -1, minTotal: -1
                                 };
@@ -1713,6 +1741,11 @@
                             const ev = Number(r.ev) || 0;
                             
                             stat.liters += (r.categoryName === '加油' ? liters : 0);
+                            if (r.categoryName === '加油') {
+                                stat.fuelCount += 1;
+                                if (liters < 0) stat.negativeLiters = true;
+                                if (liters <= 0 && amount > 0) stat.fuelAmountOnly = true;
+                            }
                             stat.chargeAmt += (r.categoryName === '充电' ? (r.recordType === 'income' ? 0 : amount) : 0);
                             
                             stat.totalCost += (r.recordType === 'income' ? -amount : amount);
@@ -1765,17 +1798,56 @@
                                 ratioValues.push(((evDiff / (hevDiff + evDiff)) * 100).toFixed(1));
                             }
 
-                            if (inWindow && hevDiff > 0 && stat.liters > 0) {
-                                // 标准口径拆分：
-                                // 1) 综合油耗 = 燃油量 ÷ 行驶总里程（GB/T 19753 综合燃料消耗量）
-                                // 2) 燃油行驶段油耗 = 燃油量 ÷ HEV 里程（辅助指标，非馈电油耗）
-                                // 3) 馈电油耗(CS折算) = 燃油行驶段油耗 × CS 发动机运转里程占比 η
-                                const segFuel = (stat.liters / hevDiff) * fuelMultiplier;
-                                const csDuty = Number(appSettings.csDuty) || 0.50;
-                                gasDates.push(p);
-                                gasValues.push(segFuel.toFixed(2));
-                                csValues.push((segFuel * csDuty).toFixed(2));
-                                gasTotalValues.push(totalDiff > 0 ? ((stat.liters / totalDiff) * fuelMultiplier).toFixed(2) : null);
+                            // 当前时间窗内的实际 CS 里程占比（HEV 里程 ÷ 总里程）
+                            if (inWindow) {
+                                if (totalDiff > 0) {
+                                    gasWindowTotal += totalDiff;
+                                    gasWindowHev += Math.max(0, hevDiff);
+                                } else {
+                                    gasWindowHev += Math.max(0, hevDiff);
+                                    gasWindowEv += Math.max(0, evDiff);
+                                }
+                                if (stat.fuelAmountOnly && stat.liters <= 0) gasAnomalyCount += 1;
+                            }
+
+                            if (inWindow && stat.liters > 0) {
+                                const totalValid = totalDiff > 0;
+                                const hevValid = hevDiff > 0;
+                                const csValid = hevValid && !(totalValid && hevDiff > totalDiff);
+                                const metaHev = Math.max(0, hevDiff);
+                                const metaEv = Math.max(0, evDiff);
+                                const fuelQuality = [];
+
+                                if (totalDiff < 0 || hevDiff < 0 || evDiff < 0) fuelQuality.push('mileageReset');
+                                if (!totalValid) fuelQuality.push('noTotalMileage');
+                                if (!hevValid) fuelQuality.push('noHevMileage');
+                                if (totalValid && hevValid && hevDiff > totalDiff) fuelQuality.push('hevExceedsTotal');
+                                if (stat.fuelCount >= 2) fuelQuality.push('multiRefuel');
+                                if (stat.negativeLiters) fuelQuality.push('negativeLiters');
+
+                                if (!totalValid && !csValid) {
+                                    gasAnomalyCount += 1;
+                                } else {
+                                    const csFuel = csValid ? (stat.liters / hevDiff) * fuelMultiplier : null;
+                                    const etaActual = totalValid
+                                        ? metaHev / totalDiff
+                                        : ((metaHev + metaEv) > 0 ? metaHev / (metaHev + metaEv) : null);
+
+                                    gasDates.push(p);
+                                    gasTotalValues.push(totalValid ? Number(((stat.liters / totalDiff) * fuelMultiplier).toFixed(fuelDigits)) : null);
+                                    gasValues.push(csValid ? Number(csFuel.toFixed(fuelDigits)) : null);
+                                    gasForecastValues.push(csMode === 'manual' && csFuel !== null
+                                        ? Number((csFuel * csDuty).toFixed(fuelDigits))
+                                        : null);
+                                    gasMeta.push({
+                                        liters: stat.liters,
+                                        totalDiff: totalValid ? totalDiff : 0,
+                                        hevDiff: metaHev,
+                                        evDiff: metaEv,
+                                        etaActual,
+                                        quality: fuelQuality
+                                    });
+                                }
                             }
                             if (inWindow && evDiff > 0 && stat.chargeAmt > 0) {
                                 evDates.push(p);
@@ -1798,6 +1870,9 @@
                             if (stat.maxEv > -1) prevMaxEv = stat.maxEv;
                             if (stat.maxTotal > -1) prevMaxTotal = stat.maxTotal;
                         });
+
+                        const etaBase = gasWindowTotal > 0 ? gasWindowTotal : (gasWindowHev + gasWindowEv);
+                        gasActualEta.value = etaBase > 0 ? (gasWindowHev / etaBase) * 100 : null;
                     }
 
                     // 饼图 / 分类走势只展示时间窗内的记录；走势曲线的窗口裁剪已在聚合阶段由 windowKey 完成
@@ -1908,27 +1983,141 @@
                         series: [{ ...chartPoint, name: '纯电比例', type: 'line', data: ratioValues, smooth: true, color: CHART.green, areaStyle: { opacity: 0.18 } }]
                     });
 
+                    // ===== 油耗分析图表：口径与双轴（GB/T 19753 对标）=====
+                    const fuelUnitText = appSettings.fuelUnit;
+                    const wltcCombined = appSettings.fuelUnit === 'L/百公里' ? 1.98 : 0.0198;
+                    const wltcCs = appSettings.fuelUnit === 'L/百公里' ? 5.3 : 0.053;
+                    const wltcDigits = appSettings.fuelUnit === 'L/百公里' ? 2 : 4;
+                    const wltcText = (v) => {
+                        const text = v.toFixed(wltcDigits);
+                        return text.indexOf('.') >= 0 ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+                    };
+                    const gasAxisMaxWith = (base, ratio) => (value) => {
+                        const rawMax = Number(value && value.max);
+                        return Math.max(Number.isFinite(rawMax) ? rawMax : 0, base) * ratio;
+                    };
+                    const gasQualityText = {
+                        mileageReset: '里程回退或重置',
+                        noTotalMileage: '总里程缺失',
+                        noHevMileage: 'HEV里程缺失',
+                        hevExceedsTotal: 'HEV里程大于总里程',
+                        multiRefuel: '周期内多次加油',
+                        negativeLiters: '存在负加油量'
+                    };
+                    const gasEtaText = gasActualEta.value === null ? '—' : `${gasActualEta.value.toFixed(1)}%`;
+                    const gasEtaMismatch = csMode === 'manual'
+                        && gasActualEta.value !== null
+                        && Math.abs(csDuty * 100 - gasActualEta.value) > 20;
+                    const gasSubtext = [
+                        csMode === 'manual' ? `η=${csDuty.toFixed(2)}（手动）` : `η=${gasEtaText}（自动）`,
+                        `WLTC ${wltcText(wltcCombined)}/${wltcText(wltcCs)}`
+                    ].join(' · ')
+                        + (gasEtaMismatch ? ' · η偏差大' : '')
+                        + (gasAnomalyCount > 0 ? ` · 异常 ${gasAnomalyCount}` : '');
+
+                    const gasSeries = [
+                        {
+                            ...chartPoint,
+                            name: '综合油耗（实际）',
+                            type: 'line',
+                            data: gasTotalValues,
+                            smooth: true,
+                            color: CHART.amber,
+                            lineStyle: { width: 2 },
+                            ...(gasTotalValues.some(v => v !== null) ? {
+                                markLine: {
+                                    silent: true,
+                                    symbol: 'none',
+                                    data: [{
+                                        yAxis: wltcCombined,
+                                        label: { formatter: `WLTC综合 ${wltcText(wltcCombined)}`, fontSize: 9, color: CHART.label },
+                                        lineStyle: { color: CHART.slate, type: 'dotted' }
+                                    }]
+                                }
+                            } : {})
+                        },
+                        {
+                            ...chartPoint,
+                            name: 'CS油耗（实测代理）',
+                            type: 'line',
+                            data: gasValues,
+                            smooth: true,
+                            color: CHART.blue,
+                            yAxisIndex: 1,
+                            lineStyle: { width: 2 },
+                            ...(gasValues.some(v => v !== null) ? {
+                                markLine: {
+                                    silent: true,
+                                    symbol: 'none',
+                                    data: [{
+                                        yAxis: wltcCs,
+                                        label: { formatter: `WLTC馈电 ${wltcText(wltcCs)}`, fontSize: 9, color: CHART.label },
+                                        lineStyle: { color: CHART.slate, type: 'dotted' }
+                                    }]
+                                }
+                            } : {})
+                        }
+                    ];
+                    if (csMode === 'manual') {
+                        gasSeries.push({
+                            ...chartPoint,
+                            name: '综合油耗预测',
+                            type: 'line',
+                            data: gasForecastValues,
+                            smooth: true,
+                            color: CHART.violet,
+                            lineStyle: { type: 'dashed', width: 1.5 }
+                        });
+                    }
+
                     gasChart.setOption({
-                        tooltip: { ...chartTooltipBase, trigger: 'axis' },
-                        legend: { ...buildChartLegend(34), data: ['综合油耗', '燃油行驶段油耗', '馈电油耗(CS折算)'] },
+                        tooltip: {
+                            ...chartTooltipBase,
+                            trigger: 'axis',
+                            extraCssText: (chartTooltipBase.extraCssText || '') + 'max-width:280px;white-space:normal;',
+                            formatter: (params) => {
+                                if (!params || !params.length) return '';
+                                const idx = params[0].dataIndex;
+                                const meta = gasMeta[idx];
+                                if (!meta) return '';
+                                const fmtFuel = (v) => (v === null || v === undefined || v === '') ? '—' : `${Number(v).toFixed(fuelDigits)} ${fuelUnitText}`;
+                                const fmtKm = (v) => Number(v) > 0 ? `${Math.round(Number(v)).toLocaleString('zh-CN')} km` : '—';
+                                const fmtEta = (v) => (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : `${(Number(v) * 100).toFixed(1)}%`;
+                                const qualityLabels = meta.quality.map(k => gasQualityText[k]).filter(Boolean);
+                                const rows = [
+                                    `<div style="font-weight:600;margin-bottom:4px;">${gasDates[idx] || params[0].axisValue}</div>`,
+                                    `<div>综合油耗（实际）：${fmtFuel(gasTotalValues[idx])}</div>`,
+                                    `<div>CS油耗（实测代理）：${fmtFuel(gasValues[idx])}</div>`                                ];
+                                if (csMode === 'manual') {
+                                    rows.push(`<div>综合油耗预测（η=${csDuty.toFixed(2)}）：${fmtFuel(gasForecastValues[idx])}</div>`);
+                                }
+                                rows.push(`<div style="margin-top:4px;border-top:1px solid #E5E7EB;padding-top:4px;">加油量：${Number(meta.liters) > 0 ? Number(meta.liters).toFixed(2) + ' L' : '—'}</div>`);
+                                rows.push(`<div>总里程：${fmtKm(meta.totalDiff)}｜HEV：${fmtKm(meta.hevDiff)}｜EV：${fmtKm(meta.evDiff)}</div>`);
+                                rows.push(`<div>实际CS里程占比 η：${fmtEta(meta.etaActual)}</div>`);
+                                rows.push(`<div>数据质量：${qualityLabels.length ? qualityLabels.join(' / ') : '正常'}</div>`);
+                                return rows.join('');
+                            }
+                        },
+                        legend: { ...buildChartLegend(34), data: gasSeries.map(s => s.name) },
                         grid: { left: '15%', right: '14%', bottom: '12%', top: '34%' },
                         title: chartTitle(`油耗分析 (${appSettings.fuelUnit})`, {
-                            subtext: `CS折算系数 η=${(Number(appSettings.csDuty) || 0.50).toFixed(2)}`,
+                            subtext: gasSubtext,
                             subtextStyle: { fontSize: 10, color: CHART.label }
                         }),
+                        graphic: gasDates.length ? [] : [{
+                            type: 'text',
+                            left: 'center',
+                            top: 'middle',
+                            silent: true,
+                            style: { text: '当前时间范围无有效加油记录', fill: CHART.label, fontSize: 12 }
+                        }],
                         xAxis: { ...commonOptions.xAxis, data: gasDates },
                         yAxis: [
-                            { ...chartYAxis, name: '综合', nameTextStyle: { color: CHART.label, fontSize: 10 }, min: 'dataMin' },
-                            { ...chartYAxis, name: '段/CS', nameTextStyle: { color: CHART.label, fontSize: 10 }, splitLine: { show: false } }
+                            { ...chartYAxis, name: '综合', nameTextStyle: { color: CHART.label, fontSize: 10 }, min: 0, max: gasAxisMaxWith(wltcCombined, 1.15) },
+                            { ...chartYAxis, name: 'CS/段', nameTextStyle: { color: CHART.label, fontSize: 10 }, min: 0, max: gasAxisMaxWith(wltcCs, 1.10), splitLine: { show: false } }
                         ],
-                        series: [
-                            { ...chartPoint, name: '综合油耗', type: 'line', data: gasTotalValues, smooth: true, color: CHART.amber },
-                            { ...chartPoint, name: '燃油行驶段油耗', type: 'line', data: gasValues, smooth: true, color: CHART.blue, yAxisIndex: 1 },
-                            { ...chartPoint, name: '馈电油耗(CS折算)', type: 'line', data: csValues, smooth: true, color: CHART.violet, yAxisIndex: 1,
-                              lineStyle: { type: 'dashed' },
-                              markLine: { silent: true, symbol: 'none', data: [{ yAxis: appSettings.fuelUnit === 'L/百公里' ? 5.3 : 0.053, label: { formatter: '官方WLTC', fontSize: 9, color: CHART.label }, lineStyle: { color: CHART.slate, type: 'dotted' } }] } }
-                        ]
-                    });
+                        series: gasSeries
+                    }, { notMerge: true });
 
                     evChart.setOption({
                         ...commonOptions,
@@ -2137,6 +2326,11 @@
                                 categories.value = data.categories;
                                 records.value = nextRecords;
                                 if (data.settings) Object.assign(appSettings, data.settings);
+                                appSettings.csMode = appSettings.csMode === 'manual' ? 'manual' : 'auto';
+                                const importedCsDuty = Number(appSettings.csDuty);
+                                appSettings.csDuty = Number.isFinite(importedCsDuty)
+                                    ? Math.min(0.60, Math.max(0.05, importedCsDuty))
+                                    : 0.18;
                                 currentVehicleId.value = vehicles.value[0].id;
                                 normalizeSubItems();
                                 migrateLegacyLabels();
@@ -2191,7 +2385,7 @@
 
                 return {
                     appVersion: APP_VERSION,
-                    activeTab, chartPeriod, selectedChartCategory, appSettings, isCompact, 
+                    activeTab, chartPeriod, selectedChartCategory, appSettings, isCompact, gasActualEta,
                     vehicles, currentVehicleId, currentVehicleName, handleVehicleChange, addVehicle, editVehicle, deleteVehicle, vehicleRecordCount,
                     categories, records, activeRecords, form, currentCategory, groupedRecords, hasMileageInfo,
                     filteredCategories, activeCategories, currentPage, pageSize, requiresMileage, showSubCatPie, formatSoc,

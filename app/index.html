@@ -547,10 +547,15 @@
                     <el-form-item label="保养提醒间隔(月)">
                         <el-input-number v-model="appSettings.maintMonths" :min="1" :step="1" @change="saveSettings"></el-input-number>
                     </el-form-item>
-                    <el-form-item label="CS折算系数 η">
-                        <el-input-number v-model="appSettings.csDuty" :min="0.3" :max="0.8" :step="0.05" :precision="2" @change="saveSettings"></el-input-number>
-                        <el-tooltip placement="top" effect="dark" content="η 为发动机运转里程占比（0.3~0.8）。馈电油耗(CS折算) = 燃油行驶段油耗 × η，用于把燃油里程段油耗折算为 CS 工况参考值。">
-                            <span class="help-dot" tabindex="0" aria-label="CS 折算系数说明">?</span>
+                    <el-form-item label="CS里程占比 η">
+                        <el-radio-group v-model="appSettings.csMode" @change="saveSettings" style="margin-right: 12px;">
+                            <el-radio-button label="auto">自动</el-radio-button>
+                            <el-radio-button label="manual">手动</el-radio-button>
+                        </el-radio-group>
+                        <el-input-number v-if="appSettings.csMode === 'manual'" v-model="appSettings.csDuty" :min="0.05" :max="0.60" :step="0.01" :precision="2" @change="saveSettings"></el-input-number>
+                        <span v-else style="color: #909399; font-size: 12px;">当前区间实际 η：{{ gasActualEta === null ? '—' : gasActualEta.toFixed(1) + '%' }}</span>
+                        <el-tooltip placement="top" effect="dark" content="η 为 CS（电量保持）模式行驶里程占总里程的比例，η ≈ HEV里程 ÷ 总里程。自动模式按当前统计区间实际值计算；手动模式用于情景预测。η 不参与 CS 油耗本身的计算。">
+                            <span class="help-dot" tabindex="0" aria-label="CS 里程占比说明">?</span>
                         </el-tooltip>
                     </el-form-item>
                     <el-form-item label="自动备份周期(天)">
