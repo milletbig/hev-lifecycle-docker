@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.2.0';
+        const APP_VERSION = '1.2.1';
 
         const app = createApp({
             setup() {
@@ -1643,7 +1643,7 @@
                 };
 
                 // 统一图表配色：4 个语义色 + 1 个中性色，固定 Hex，避免渐变与屏幕相关的色彩偏差
-                // 蓝=费用/里程/金额，绿=电耗/纯电，琥珀=油耗，紫=CS折算/衍生指标，灰=参考线
+                // 蓝=费用/里程/金额，绿=充电成本/纯电，琥珀=油耗，紫=CS折算/衍生指标，灰=参考线
                 const CHART = {
                     blue: '#3B82F6',
                     green: '#10B981',
@@ -1697,6 +1697,9 @@
                     let gasDates = [], gasValues = [], gasTotalValues = [], gasForecastValues = [], gasMeta = [];
                     let gasAnomalyCount = 0;
                     let gasWindowHev = 0, gasWindowEv = 0, gasWindowTotal = 0;
+                    // 记录每个点的 CS 是否为实测值：补全只参照实测点，避免估算值互相传染
+                    let gasCsMeasured = [];
+                    let gasCsFilledCount = 0;
                     let evDates = [], evValues = [];
                     let costDates = [], costValues = [];
                     let energyDates = [], energyValues = [];
@@ -1790,7 +1793,7 @@
                             }
 
                             // 时间窗之前的周期只参与累计与差分，不进入图表；
-                            // 窗口首周期因此能拿到上一个周期的里程基准，油耗/电耗点不再缺失
+                            // 窗口首周期因此能拿到上一个周期的里程基准，油耗/充电成本点不再缺失
                             const inWindow = !windowKey || p >= windowKey;
 
                             if (inWindow && hevDiff + evDiff > 0) {
@@ -1836,6 +1839,7 @@
                                     gasDates.push(p);
                                     gasTotalValues.push(totalValid ? Number(((stat.liters / totalDiff) * fuelMultiplier).toFixed(fuelDigits)) : null);
                                     gasValues.push(csValid ? Number(csFuel.toFixed(fuelDigits)) : null);
+                                    gasCsMeasured.push(csValid);
                                     gasForecastValues.push(csMode === 'manual' && csFuel !== null
                                         ? Number((csFuel * csDuty).toFixed(fuelDigits))
                                         : null);
@@ -1873,6 +1877,60 @@
 
                         const etaBase = gasWindowTotal > 0 ? gasWindowTotal : (gasWindowHev + gasWindowEv);
                         gasActualEta.value = etaBase > 0 ? (gasWindowHev / etaBase) * 100 : null;
+
+                        // ===== CS 曲线自动补全 =====
+                        // 断续根因：周期内 HEV 里程增量为 0（纯电出行月 / HEV 里程未更新）时，
+                        // CS 分母为 0，原逻辑把该点置为 null，ECharts 在 null 处断线。
+                        // 补全规则：仅对“有加油、有总里程增量、HEV 增量为 0、非里程回退”的周期，
+                        // 用最近实测周期的实际 η 反推 HEV 里程（η 优先就近，其次使用时间窗 η），
+                        // 再按该周期实测加油量计算 CS；无可用 η 参照时保持 null。
+                        // 补全点以空心圆标注并在 Tooltip 说明来源，不参与 η、加油量与异常计数统计。
+                        const csValueOf = (v) => {
+                            const raw = (v && typeof v === 'object') ? v.value : v;
+                            return (raw === null || raw === undefined || raw === '') ? null : Number(raw);
+                        };
+                        const nearestMeasuredEta = (index) => {
+                            for (let step = 1; step <= gasValues.length; step += 1) {
+                                const prevIndex = index - step;
+                                if (prevIndex >= 0 && gasCsMeasured[prevIndex]) {
+                                    const eta = gasMeta[prevIndex] && gasMeta[prevIndex].etaActual;
+                                    if (eta > 0) return eta;
+                                }
+                                const nextIndex = index + step;
+                                if (nextIndex < gasValues.length && gasCsMeasured[nextIndex]) {
+                                    const eta = gasMeta[nextIndex] && gasMeta[nextIndex].etaActual;
+                                    if (eta > 0) return eta;
+                                }
+                            }
+                            return null;
+                        };
+                        const windowEta = gasActualEta.value === null ? null : gasActualEta.value / 100;
+                        for (let i = 0; i < gasValues.length; i += 1) {
+                            if (gasCsMeasured[i]) continue;
+                            const meta = gasMeta[i];
+                            if (!meta || !(meta.liters > 0) || !(meta.totalDiff > 0)) continue;
+                            if (meta.hevDiff > 0) continue;
+                            if (meta.quality.includes('mileageReset')) continue;
+                            const refEta = nearestMeasuredEta(i) ?? windowEta;
+                            if (!(refEta > 0)) continue;
+                            const hevEst = meta.totalDiff * refEta;
+                            const csEst = hevEst > 0 ? (meta.liters / hevEst) * fuelMultiplier : null;
+                            if (csEst === null || !Number.isFinite(csEst) || csEst <= 0) continue;
+                            const rounded = Number(csEst.toFixed(fuelDigits));
+                            gasValues[i] = {
+                                value: rounded,
+                                symbol: 'emptyCircle',
+                                symbolSize: isCompact.value ? 5 : 6,
+                                itemStyle: { color: '#fff', borderColor: CHART.blue, borderWidth: 1.5 }
+                            };
+                            if (csMode === 'manual') {
+                                gasForecastValues[i] = Number((rounded * csDuty).toFixed(fuelDigits));
+                            }
+                            meta.csFilled = true;
+                            meta.csRefEta = refEta;
+                            meta.quality.push('csFilled');
+                            gasCsFilledCount += 1;
+                        }
                     }
 
                     // 饼图 / 分类走势只展示时间窗内的记录；走势曲线的窗口裁剪已在聚合阶段由 windowKey 完成
@@ -2002,7 +2060,8 @@
                         noHevMileage: 'HEV里程缺失',
                         hevExceedsTotal: 'HEV里程大于总里程',
                         multiRefuel: '周期内多次加油',
-                        negativeLiters: '存在负加油量'
+                        negativeLiters: '存在负加油量',
+                        csFilled: 'CS补全（按邻近η估算）'
                     };
                     const gasEtaText = gasActualEta.value === null ? '—' : `${gasActualEta.value.toFixed(1)}%`;
                     const gasEtaMismatch = csMode === 'manual'
@@ -2013,6 +2072,7 @@
                         `WLTC ${wltcText(wltcCombined)}/${wltcText(wltcCs)}`
                     ].join(' · ')
                         + (gasEtaMismatch ? ' · η偏差大' : '')
+                        + (gasCsFilledCount > 0 ? ` · 补全 ${gasCsFilledCount}` : '')
                         + (gasAnomalyCount > 0 ? ` · 异常 ${gasAnomalyCount}` : '');
 
                     const gasSeries = [
@@ -2044,6 +2104,7 @@
                             smooth: true,
                             color: CHART.blue,
                             yAxisIndex: 1,
+                            connectNulls: true,
                             lineStyle: { width: 2 },
                             ...(gasValues.some(v => v !== null) ? {
                                 markLine: {
@@ -2066,6 +2127,7 @@
                             data: gasForecastValues,
                             smooth: true,
                             color: CHART.violet,
+                            connectNulls: true,
                             lineStyle: { type: 'dashed', width: 1.5 }
                         });
                     }
@@ -2080,20 +2142,26 @@
                                 const idx = params[0].dataIndex;
                                 const meta = gasMeta[idx];
                                 if (!meta) return '';
-                                const fmtFuel = (v) => (v === null || v === undefined || v === '') ? '—' : `${Number(v).toFixed(fuelDigits)} ${fuelUnitText}`;
+                                const fmtFuel = (v) => {
+                                    const raw = (v && typeof v === 'object') ? v.value : v;
+                                    return (raw === null || raw === undefined || raw === '') ? '—' : `${Number(raw).toFixed(fuelDigits)} ${fuelUnitText}`;
+                                };
                                 const fmtKm = (v) => Number(v) > 0 ? `${Math.round(Number(v)).toLocaleString('zh-CN')} km` : '—';
                                 const fmtEta = (v) => (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : `${(Number(v) * 100).toFixed(1)}%`;
                                 const qualityLabels = meta.quality.map(k => gasQualityText[k]).filter(Boolean);
                                 const rows = [
                                     `<div style="font-weight:600;margin-bottom:4px;">${gasDates[idx] || params[0].axisValue}</div>`,
                                     `<div>综合油耗（实际）：${fmtFuel(gasTotalValues[idx])}</div>`,
-                                    `<div>CS油耗（实测代理）：${fmtFuel(gasValues[idx])}</div>`                                ];
+                                    `<div>CS油耗（实测代理）：${fmtFuel(gasValues[idx])}${meta.csFilled ? '（估算）' : ''}</div>`                                ];
                                 if (csMode === 'manual') {
                                     rows.push(`<div>综合油耗预测（η=${csDuty.toFixed(2)}）：${fmtFuel(gasForecastValues[idx])}</div>`);
                                 }
                                 rows.push(`<div style="margin-top:4px;border-top:1px solid #E5E7EB;padding-top:4px;">加油量：${Number(meta.liters) > 0 ? Number(meta.liters).toFixed(2) + ' L' : '—'}</div>`);
                                 rows.push(`<div>总里程：${fmtKm(meta.totalDiff)}｜HEV：${fmtKm(meta.hevDiff)}｜EV：${fmtKm(meta.evDiff)}</div>`);
                                 rows.push(`<div>实际CS里程占比 η：${fmtEta(meta.etaActual)}</div>`);
+                                if (meta.csFilled) {
+                                    rows.push(`<div>补全依据：邻近周期 η ${fmtEta(meta.csRefEta)}</div>`);
+                                }
                                 rows.push(`<div>数据质量：${qualityLabels.length ? qualityLabels.join(' / ') : '正常'}</div>`);
                                 return rows.join('');
                             }
@@ -2121,11 +2189,11 @@
 
                     evChart.setOption({
                         ...commonOptions,
-                        legend: { ...buildChartLegend(), data: ['电耗'] },
-                        title: chartTitle(`区间电耗 (${appSettings.costUnit})`),
+                        legend: { ...buildChartLegend(), data: ['充电成本'] },
+                        title: chartTitle(`区间充电成本 (${appSettings.costUnit})`),
                         xAxis: { ...commonOptions.xAxis, data: evDates },
                         yAxis: { ...chartYAxis, min: 'dataMin' },
-                        series: [{ ...chartPoint, name: '电耗', type: 'line', data: evValues, smooth: true, color: CHART.green }]
+                        series: [{ ...chartPoint, name: '充电成本', type: 'line', data: evValues, smooth: true, color: CHART.green }]
                     });
 
                     totalEnergyChart.setOption({
