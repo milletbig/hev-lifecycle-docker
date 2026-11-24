@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.2.2';
+        const APP_VERSION = '1.2.3';
 
         const app = createApp({
             setup() {
@@ -2032,6 +2032,15 @@
                         ]
                     });
 
+                    // 虚线参考线标签自适应：锚定绘图区内侧右端，避免超出画布被截断；
+                    // 参考线接近坐标轴顶部（>92%）时改到线下，防止标签越过绘图区上边界
+                    const refLineLabel = (text, value, axisMax) => ({
+                        formatter: text,
+                        fontSize: 9,
+                        color: CHART.label,
+                        distance: 4,
+                        position: axisMax > 0 && value / axisMax > 0.92 ? 'insideEndBottom' : 'insideEndTop'
+                    });
                     // 纯电比例均值：按当前时间窗内已绘制的数据点计算，随筛选联动
                     const ratioAvg = ratioValues.length
                         ? ratioValues.reduce((sum, v) => sum + Number(v), 0) / ratioValues.length
@@ -2056,7 +2065,7 @@
                                     symbol: 'none',
                                     data: [{
                                         yAxis: Number(ratioAvg.toFixed(1)),
-                                        label: { formatter: `均值 ${ratioAvg.toFixed(1)}%`, fontSize: 9, color: CHART.label },
+                                        label: refLineLabel(`均值 ${ratioAvg.toFixed(1)}%`, ratioAvg, 100),
                                         lineStyle: { color: CHART.green, type: 'dashed' }
                                     }]
                                 }
@@ -2098,6 +2107,14 @@
                         + (gasCsFilledCount > 0 ? ` · 补全 ${gasCsFilledCount}` : '')
                         + (gasAnomalyCount > 0 ? ` · 异常 ${gasAnomalyCount}` : '');
 
+                    // 双轴上限与 yAxis.max 保持一致，用于参考线标签的上下自适应
+                    const gasNumericMax = (arr) => arr.reduce((max, v) => {
+                        const n = (v && typeof v === 'object') ? Number(v.value) : Number(v);
+                        return Number.isFinite(n) ? Math.max(max, n) : max;
+                    }, 0);
+                    const gasTotalAxisMax = Math.max(gasNumericMax(gasTotalValues), wltcCombined) * 1.15;
+                    const gasCsAxisMax = Math.max(gasNumericMax(gasValues), wltcCs) * 1.10;
+
                     const gasSeries = [
                         {
                             ...chartPoint,
@@ -2113,7 +2130,7 @@
                                     symbol: 'none',
                                     data: [{
                                         yAxis: wltcCombined,
-                                        label: { formatter: `WLTC综合 ${wltcText(wltcCombined)}`, fontSize: 9, color: CHART.label },
+                                        label: refLineLabel(`WLTC综合 ${wltcText(wltcCombined)}`, wltcCombined, gasTotalAxisMax),
                                         lineStyle: { color: CHART.slate, type: 'dotted' }
                                     }]
                                 }
@@ -2135,7 +2152,7 @@
                                     symbol: 'none',
                                     data: [{
                                         yAxis: wltcCs,
-                                        label: { formatter: `WLTC馈电 ${wltcText(wltcCs)}`, fontSize: 9, color: CHART.label },
+                                        label: refLineLabel(`WLTC馈电 ${wltcText(wltcCs)}`, wltcCs, gasCsAxisMax),
                                         lineStyle: { color: CHART.slate, type: 'dotted' }
                                     }]
                                 }
@@ -2214,6 +2231,10 @@
                     const evCostAvg = evValues.length
                         ? evValues.reduce((sum, v) => sum + Number(v), 0) / evValues.length
                         : null;
+                    const evCostMax = evValues.reduce((max, v) => {
+                        const n = Number(v);
+                        return Number.isFinite(n) ? Math.max(max, n) : max;
+                    }, 0);
                     evChart.setOption({
                         ...commonOptions,
                         legend: { ...buildChartLegend(), data: ['充电成本'] },
@@ -2233,7 +2254,7 @@
                                     symbol: 'none',
                                     data: [{
                                         yAxis: Number(evCostAvg.toFixed(2)),
-                                        label: { formatter: `均值 ${evCostAvg.toFixed(2)}`, fontSize: 9, color: CHART.label },
+                                        label: refLineLabel(`均值 ${evCostAvg.toFixed(2)}`, evCostAvg, evCostMax),
                                         lineStyle: { color: CHART.green, type: 'dashed' }
                                     }]
                                 }
