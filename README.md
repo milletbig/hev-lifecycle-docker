@@ -76,7 +76,7 @@ bash scripts/restore.sh <备份文件路径>   # 恢复指定备份
 | 权限与角色 | 管理员 / 编辑者 / 只读，切换为只读前需二次确认；用于本地防误操作，不构成账号级安全隔离 |
 | 数据备份与恢复 | 导出 JSON/CSV 成功后提示；备份区展示本地最近保存时间、服务端备份份数与最近同步时间；导入前需确认并自动导出当前数据备份 |
 
-设置页顶部标题右侧展示当前运行版本（如“当前版本 v1.2.1”），用于快速核对容器内镜像是否为最新版本。该版本号与 `docker-compose.yml` 镜像标签、`Dockerfile` OCI 版本标签保持一致。站点同时提供 SVG / ICO / Apple Touch 三种图标（`app/favicon.svg`、`app/favicon.ico`、`app/apple-touch-icon.png`），登录页与主页面均已引用。
+设置页顶部标题右侧展示当前运行版本（如“当前版本 v1.2.2”），用于快速核对容器内镜像是否为最新版本。该版本号与 `docker-compose.yml` 镜像标签、`Dockerfile` OCI 版本标签保持一致。站点同时提供 SVG / ICO / Apple Touch 三种图标（`app/favicon.svg`、`app/favicon.ico`、`app/apple-touch-icon.png`），登录页与主页面均已引用。
 
 ### 油耗指标口径
 
@@ -118,7 +118,7 @@ bash scripts/restore.sh <备份文件路径>   # 恢复指定备份
 | 项目 | 值 |
 | --- | --- |
 | 镜像地址 | `ghcr.io/milletbig/hev-lifecycle-docker` |
-| 标签 | `1.2.1`、`1.2`、`latest`、`sha-<commit>` |
+| 标签 | `1.2.2`、`1.2`、`latest`、`sha-<commit>` |
 | 架构 | `linux/amd64`、`linux/arm64` |
 
 升级到新版本时，修改 `docker-compose.yml` 中的镜像标签后执行：

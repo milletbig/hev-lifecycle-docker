@@ -1,7 +1,7 @@
         const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
         // 当前运行版本：与镜像标签、Dockerfile OCI 版本保持一致，设置页展示用
-        const APP_VERSION = '1.2.1';
+        const APP_VERSION = '1.2.2';
 
         const app = createApp({
             setup() {
@@ -2032,13 +2032,36 @@
                         ]
                     });
 
+                    // 纯电比例均值：按当前时间窗内已绘制的数据点计算，随筛选联动
+                    const ratioAvg = ratioValues.length
+                        ? ratioValues.reduce((sum, v) => sum + Number(v), 0) / ratioValues.length
+                        : null;
                     chartEvRatio.setOption({
                         ...commonOptions,
                         legend: { ...buildChartLegend(), data: ['纯电比例'] },
                         title: chartTitle('纯电比例 (EV Ratio %)'),
                         xAxis: { ...commonOptions.xAxis, data: ratioDates },
                         yAxis: { ...chartYAxis, max: 100 },
-                        series: [{ ...chartPoint, name: '纯电比例', type: 'line', data: ratioValues, smooth: true, color: CHART.green, areaStyle: { opacity: 0.18 } }]
+                        series: [{
+                            ...chartPoint,
+                            name: '纯电比例',
+                            type: 'line',
+                            data: ratioValues,
+                            smooth: true,
+                            color: CHART.green,
+                            areaStyle: { opacity: 0.18 },
+                            ...(ratioAvg !== null ? {
+                                markLine: {
+                                    silent: true,
+                                    symbol: 'none',
+                                    data: [{
+                                        yAxis: Number(ratioAvg.toFixed(1)),
+                                        label: { formatter: `均值 ${ratioAvg.toFixed(1)}%`, fontSize: 9, color: CHART.label },
+                                        lineStyle: { color: CHART.green, type: 'dashed' }
+                                    }]
+                                }
+                            } : {})
+                        }]
                     });
 
                     // ===== 油耗分析图表：口径与双轴（GB/T 19753 对标）=====
@@ -2187,13 +2210,35 @@
                         series: gasSeries
                     }, { notMerge: true });
 
+                    // 充电成本均值：按当前时间窗内已绘制的数据点计算，随筛选联动
+                    const evCostAvg = evValues.length
+                        ? evValues.reduce((sum, v) => sum + Number(v), 0) / evValues.length
+                        : null;
                     evChart.setOption({
                         ...commonOptions,
                         legend: { ...buildChartLegend(), data: ['充电成本'] },
                         title: chartTitle(`区间充电成本 (${appSettings.costUnit})`),
                         xAxis: { ...commonOptions.xAxis, data: evDates },
                         yAxis: { ...chartYAxis, min: 'dataMin' },
-                        series: [{ ...chartPoint, name: '充电成本', type: 'line', data: evValues, smooth: true, color: CHART.green }]
+                        series: [{
+                            ...chartPoint,
+                            name: '充电成本',
+                            type: 'line',
+                            data: evValues,
+                            smooth: true,
+                            color: CHART.green,
+                            ...(evCostAvg !== null ? {
+                                markLine: {
+                                    silent: true,
+                                    symbol: 'none',
+                                    data: [{
+                                        yAxis: Number(evCostAvg.toFixed(2)),
+                                        label: { formatter: `均值 ${evCostAvg.toFixed(2)}`, fontSize: 9, color: CHART.label },
+                                        lineStyle: { color: CHART.green, type: 'dashed' }
+                                    }]
+                                }
+                            } : {})
+                        }]
                     });
 
                     totalEnergyChart.setOption({
