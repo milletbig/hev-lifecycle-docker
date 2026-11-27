@@ -37,6 +37,10 @@
         .toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: none; background: none; color: #909399; font-size: 12px; cursor: pointer; padding: 6px 8px; border-radius: 4px; }
         .toggle:hover { color: #409eff; background: #ecf5ff; }
         .row { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 20px; font-size: 12.5px; color: #909399; }
+        .remember { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -8px 0 18px; font-size: 12.5px; color: #606266; }
+        .remember label { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 12.5px; color: #606266; cursor: pointer; user-select: none; }
+        .remember input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: #409eff; cursor: pointer; }
+        .remember-tip { font-size: 11.5px; color: #b1b3b8; }
         .btn {
             width: 100%; height: 42px; border: none; border-radius: 6px; font-size: 15px;
             background: #409eff; color: #fff; cursor: pointer; transition: background .15s; letter-spacing: 2px;
@@ -76,6 +80,13 @@
                 <span>连续失败将临时锁定登录</span>
                 <span id="capsHint" style="display:none;color:#e6a23c;">大写锁定已开启</span>
             </div>
+            <div class="remember">
+                <label for="remember30">
+                    <input id="remember30" type="checkbox">
+                    <span>30 天内免登录</span>
+                </label>
+                <span class="remember-tip">仅限本机，退出即清除</span>
+            </div>
             <button type="submit" class="btn" id="submitBtn">登 录</button>
         </form>
 
@@ -95,6 +106,9 @@
             var toggle = document.getElementById('togglePwd');
             var capsHint = document.getElementById('capsHint');
             var lockTimer = null;
+            var rememberBox = document.getElementById('remember30');
+            // v1.2.4 曾将口令副本写入本地；v1.3.0 起改用服务端长效令牌，登录页负责清理旧数据
+            var LEGACY_REMEMBER_KEY = 'hev_remember_login';
 
             function params() {
                 return new URLSearchParams(location.search);
@@ -116,7 +130,28 @@
                 msg.textContent = '';
             }
 
-            if (params().get('logout') === '1') show('已安全退出登录。', 'info');
+            function clearLegacyRemember() {
+                try { localStorage.removeItem(LEGACY_REMEMBER_KEY); } catch (e) {}
+            }
+
+            function postLogin(username, password, remember) {
+                return fetch('/api/login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username, password: password, remember: !!remember })
+                }).then(function (res) {
+                    return res.json().catch(function () { return {}; }).then(function (data) {
+                        return { status: res.status, data: data };
+                    });
+                });
+            }
+
+            clearLegacyRemember();
+            if (params().get('logout') === '1') {
+                rememberBox.checked = false;
+                show('已安全退出登录。', 'info');
+            }
 
             toggle.addEventListener('click', function () {
                 var isPwd = pwd.type === 'password';
@@ -159,16 +194,7 @@
                 }
                 btn.disabled = true;
                 btn.textContent = '登录中…';
-                fetch('/api/login', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: username, password: password })
-                }).then(function (res) {
-                    return res.json().catch(function () { return {}; }).then(function (data) {
-                        return { status: res.status, data: data };
-                    });
-                }).then(function (r) {
+                postLogin(username, password, rememberBox.checked).then(function (r) {
                     if (r.status === 200 && r.data.ok) {
                         btn.textContent = '登录成功，正在进入…';
                         location.replace(safeNext());

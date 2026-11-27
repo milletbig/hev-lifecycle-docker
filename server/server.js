@@ -30,6 +30,8 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
 
 const SESSION_HOURS = clampInt(process.env.SESSION_HOURS, 12, 1, 168);
+// 免登录长效令牌有效期（天）：独立于短会话，避免受 SESSION_HOURS 上限约束
+const REMEMBER_DAYS = clampInt(process.env.REMEMBER_DAYS, 30, 1, 90);
 const COOKIE_SECURE = String(process.env.COOKIE_SECURE || 'false').toLowerCase() === 'true';
 const TRUST_PROXY = String(process.env.TRUST_PROXY || 'false').toLowerCase() === 'true';
 const MAX_LOGIN_FAILURES = clampInt(process.env.MAX_LOGIN_FAILURES, 5, 1, 100);
@@ -42,6 +44,7 @@ const BACKUP_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 
 const COOKIE_NAME = 'hev_sid';
 const SESSION_MAX_AGE = SESSION_HOURS * 3600;
+const REMEMBER_MAX_AGE = REMEMBER_DAYS * 86400;
 
 function clampInt(raw, fallback, min, max) {
     const n = parseInt(raw, 10);
@@ -133,7 +136,25 @@ function verifySessionToken(token) {
     if (!payload || payload.u !== ADMIN_USERNAME) return null;
     if (payload.v !== PASSWORD_TAG) return null;
     if (!Number.isFinite(payload.exp) || payload.exp < Date.now()) return null;
+    // 有效期上限校验：防止异常或误签发的超长令牌绕过过期管理
+    const maxTtl = (payload.rmb === true ? REMEMBER_MAX_AGE : SESSION_MAX_AGE) * 1000;
+    const ttl = payload.exp - (Number.isFinite(payload.iat) ? payload.iat : 0);
+    if (ttl <= 0 || ttl > maxTtl) return null;
     return payload;
+}
+
+// 签发会话：remember=true 时下发长效令牌（rmb 声明），否则沿用短会话
+function issueSession(remember) {
+    const now = Date.now();
+    const maxAge = remember ? REMEMBER_MAX_AGE : SESSION_MAX_AGE;
+    const payload = {
+        u: ADMIN_USERNAME,
+        v: PASSWORD_TAG,
+        iat: now,
+        exp: now + maxAge * 1000
+    };
+    if (remember) payload.rmb = true;
+    return { token: signSession(payload), maxAge: maxAge, exp: payload.exp };
 }
 
 function parseCookies(header) {
@@ -590,14 +611,15 @@ async function handle(req, res) {
             return sendJson(res, 401, { error: '账号或密码错误', remaining: remain });
         }
         guardSuccess(ip);
-        const token = signSession({
-            u: ADMIN_USERNAME,
-            v: PASSWORD_TAG,
-            iat: Date.now(),
-            exp: Date.now() + SESSION_MAX_AGE * 1000
+        const remember = body.remember === true || body.remember === '1' || body.remember === 'true';
+        const issued = issueSession(remember);
+        res.setHeader('Set-Cookie', sessionCookie(issued.token, issued.maxAge));
+        return sendJson(res, 200, {
+            ok: true,
+            username: ADMIN_USERNAME,
+            remember: remember,
+            expiresAt: issued.exp
         });
-        res.setHeader('Set-Cookie', sessionCookie(token, SESSION_MAX_AGE));
-        return sendJson(res, 200, { ok: true, username: ADMIN_USERNAME });
     }
 
     if (pathname === '/api/logout' && method === 'POST') {
@@ -608,7 +630,25 @@ async function handle(req, res) {
     if (pathname === '/api/session' && method === 'GET') {
         const session = currentSession(req);
         if (!session) return sendJson(res, 401, { authenticated: false });
-        return sendJson(res, 200, { authenticated: true, username: session.u, expiresAt: session.exp });
+        // 长效令牌滑动续期：剩余有效期不足一半时重新签发，避免长期使用者被动掉线
+        if (session.rmb === true && session.exp - Date.now() <= (REMEMBER_MAX_AGE * 1000) / 2) {
+            const renewed = issueSession(true);
+            res.setHeader('Set-Cookie', sessionCookie(renewed.token, renewed.maxAge));
+            return sendJson(res, 200, {
+                authenticated: true,
+                username: session.u,
+                expiresAt: renewed.exp,
+                remember: true,
+                refreshed: true
+            });
+        }
+        return sendJson(res, 200, {
+            authenticated: true,
+            username: session.u,
+            expiresAt: session.exp,
+            remember: session.rmb === true,
+            refreshed: false
+        });
     }
 
     // 站点图标：浏览器在登录页也会发起匿名请求，需在鉴权前放行
@@ -746,7 +786,7 @@ function start() {
 
     server.listen(PORT, '0.0.0.0', function () {
         console.log('[info] 混动车全生命周期记录服务已启动：http://0.0.0.0:' + PORT);
-        console.log('[info] 数据目录：' + DATA_DIR + '，配置账号：' + ADMIN_USERNAME + '，会话有效期：' + SESSION_HOURS + ' 小时');
+        console.log('[info] 数据目录：' + DATA_DIR + '，配置账号：' + ADMIN_USERNAME + '，会话有效期：' + SESSION_HOURS + ' 小时，免登录有效期：' + REMEMBER_DAYS + ' 天');
     });
 
     function shutdown(signal) {
